@@ -7,7 +7,7 @@ use gc::{Gc, GcCell, Finalize};
 
 use crate::{
     ast::{Ast, Params},
-    eval::Env,
+    evaluator::Env,
     OpResult,
 };
 
@@ -64,6 +64,24 @@ impl Value {
             true
         }
     }
+    pub fn to_datum(&self) -> Option<lexpr::Value> {
+        use Value::*;
+        match self {
+            Null => Some(lexpr::Value::Null),
+            Bool(b) => Some((*b).into()),
+            Fixnum(n) => Some((*n).into()),
+            String(s) => Some(s.as_ref().into()),
+            Symbol(s) => Some(lexpr::Value::Symbol(s.clone())),
+            Cons(cell) => {
+                let cell = &*cell;
+                match (cell[0].to_datum(), cell[1].to_datum()) {
+                    (Some(car), Some(cdr)) => Some((car, cdr).into()),
+                    _ => None,
+                }
+            }
+            PrimOp(_, _) | Closure(_) => None,
+        }
+    }
 }
 
 impl From<bool> for Value {
@@ -76,6 +94,7 @@ impl From<&lexpr::Value> for Value {
     fn from(v: &lexpr::Value) -> Self {
         use lexpr::Value::*;
         match v {
+            Bool(b) => Value::Bool(*b),
             Number(n) => if let Some(n) = n.as_i64() {
                 Value::Fixnum(n)
             } else {

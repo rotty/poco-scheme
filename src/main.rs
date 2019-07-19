@@ -1,76 +1,16 @@
 use std::{
     env, fs,
     io::{self, BufRead},
-    iter,
-    rc::Rc,
     path::Path,
 };
 
-use gc::{Gc, GcCell};
-
-macro_rules! make_error {
-    ($fmt:literal) => { Value::String($fmt.into()) };
-    ($fmt:literal, $($args:expr),*) => { $crate::Value::String(format!($fmt, $($args),*).into()) }
-}
-
-mod ast;
-mod eval;
-mod prim;
-mod value;
-
-use ast::{Ast, TailPosition};
-use eval::{eval, Env, EvalError};
-use value::Value;
-
-use TailPosition::*;
-
-/// Operations produce either a success or an error value.
-type OpResult = Result<Value, Value>;
-
-macro_rules! prim_op {
-    ($name:tt, $func:expr) => {
-        ($name, Value::prim_op($name, $func))
-    };
-}
-
-fn eval_toplevel<I, F>(source: I, mut sink: F) -> Result<(), EvalError>
-where
-    I: Iterator<Item = Result<lexpr::Value, EvalError>>,
-    F: FnMut(Result<Value, EvalError>) -> Result<(), EvalError>,
-{
-    let env = vec![
-        prim_op!("+", prim::plus),
-        prim_op!("-", prim::minus),
-        prim_op!("*", prim::times),
-        prim_op!("<", prim::lt),
-        prim_op!("<=", prim::le),
-        prim_op!(">", prim::gt),
-        prim_op!(">=", prim::ge),
-        prim_op!("=", prim::eq),
-        prim_op!("display", prim::display),
-        prim_op!("newline", prim::newline),
-    ];
-    let (env, mut stack) = Env::new_root(env);
-    let env = Gc::new(GcCell::new(env));
-
-    for expr in source {
-        let res = expr.and_then(|expr| Ok(Ast::definition(&expr, &mut stack, NonTail)?));
-        if let Some(ast) = res.transpose() {
-            let res = stack
-                .resolve_rec(env.clone())
-                .map_err(Into::into)
-                .and_then(|_| ast.and_then(|ast| Ok(eval(Rc::new(ast), env.clone())?)));
-            sink(res)?;
-        }
-    }
-    Ok(())
-}
+use r3_scheme::{eval_toplevel, EvalError};
 
 fn load(path: impl AsRef<Path>) -> Result<(), EvalError> {
     let file = fs::File::open(path)?;
-    let mut parser = lexpr::Parser::from_reader(file);
+    let parser = lexpr::Parser::from_reader(file);
     eval_toplevel(
-        iter::from_fn(move || parser.parse().map_err(Into::into).transpose()),
+        parser.map(|e| e.map_err(Into::into)),
         |res| {
             let _ = res?;
             Ok(())

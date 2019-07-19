@@ -8,7 +8,7 @@ use gc::{Gc, GcCell};
 use lexpr::sexp;
 use log::debug;
 
-use crate::{eval, value::Value};
+use crate::{eval_ast, evaluator::Env, make_error, value::Value};
 
 #[derive(Debug)]
 pub enum Params {
@@ -123,13 +123,13 @@ impl EnvStack {
         &mut self.frames[last]
     }
 
-    pub fn resolve_rec(&mut self, env: Gc<GcCell<eval::Env>>) -> Result<(), Value> {
+    pub fn resolve_rec(&mut self, env: Gc<GcCell<Env>>) -> Result<(), Value> {
         let pos = env
             .borrow_mut()
             .init_rec(self.last_frame_mut().rec_bodies.len());
         let bodies = self.last_frame_mut().rec_bodies.split_off(0);
         for (i, body) in bodies.into_iter().enumerate() {
-            let value = eval(Rc::new(Ast::expr(&body, self, NonTail)?), env.clone())?;
+            let value = eval_ast(Rc::new(Ast::expr(&body, self, NonTail)?), env.clone())?;
             env.borrow_mut().resolve_rec(pos + i, value);
         }
         Ok(())
@@ -187,12 +187,9 @@ impl Params {
     pub fn bind(
         &self,
         args: Vec<Value>,
-        parent: Gc<GcCell<eval::Env>>,
-    ) -> Result<Gc<GcCell<eval::Env>>, Value> {
-        Ok(Gc::new(GcCell::new(eval::Env::new(
-            parent,
-            self.values(args)?,
-        ))))
+        parent: Gc<GcCell<Env>>,
+    ) -> Result<Gc<GcCell<Env>>, Value> {
+        Ok(Gc::new(GcCell::new(Env::new(parent, self.values(args)?))))
     }
 }
 

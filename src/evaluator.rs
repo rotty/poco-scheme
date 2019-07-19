@@ -35,9 +35,10 @@ impl Env {
         self.values[offset] = value;
     }
 
-    pub fn new_root(bindings: Vec<(&str, Value)>) -> (Self, EnvStack) {
+    pub fn new_root(bindings: &[(&str, Value)]) -> (Self, EnvStack) {
         let (idents, values): (Vec<_>, _) = bindings
             .into_iter()
+            .cloned()
             .unzip();
         let env = Env {
             parent: None,

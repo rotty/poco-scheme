@@ -12,3 +12,6 @@ gc = "0.3"
 log = "0.4.7"
 env_logger = "0.6.2"
 lexpr = "0.2.2"
+
+[patch.crates-io]
+lexpr = { git = "https://github.com/rotty/lexpr-rs" }
