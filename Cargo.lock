@@ -60,7 +60,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 [[package]]
 name = "lexpr"
 version = "0.2.2"
-source = "git+https://github.com/rotty/lexpr-rs#d95143a3fc584fc500b618bf015dfe59e6a3f821"
+source = "git+https://github.com/rotty/lexpr-rs#b692611aa5b8c1c8d2ca83a36a9c7b7c2a4c1ee8"
 dependencies = [
  "itoa 0.4.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "lexpr-macros 0.2.0 (git+https://github.com/rotty/lexpr-rs)",
@@ -71,7 +71,7 @@ dependencies = [
 [[package]]
 name = "lexpr-macros"
 version = "0.2.0"
-source = "git+https://github.com/rotty/lexpr-rs#d95143a3fc584fc500b618bf015dfe59e6a3f821"
+source = "git+https://github.com/rotty/lexpr-rs#b692611aa5b8c1c8d2ca83a36a9c7b7c2a4c1ee8"
 dependencies = [
  "proc-macro-hack 0.5.8 (registry+https://github.com/rust-lang/crates.io-index)",
  "proc-macro2 0.4.30 (registry+https://github.com/rust-lang/crates.io-index)",

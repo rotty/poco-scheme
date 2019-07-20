@@ -40,10 +40,33 @@ enum TestError {
     },
 }
 
+impl fmt::Display for TestError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        use TestError::*;
+        match self {
+            EvalFail(e) => write!(f, "evaluation failed: {}", e),
+            Unexpected { result, expected } => {
+                write!(f, "test failed: got {}, expected {}", result, expected)
+            }
+        }
+    }
+}
+
 #[derive(Debug)]
 struct Test {
     expr: lexpr::Value,
     expected: lexpr::Value,
+}
+
+struct ErrorList<'a>(&'a [TestError]);
+
+impl<'a> fmt::Display for ErrorList<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        for error in self.0 {
+            write!(f, "- {}\n", error)?;
+        }
+        Ok(())
+    }
 }
 
 impl Test {
@@ -96,11 +119,16 @@ fn run_scheme_tests() {
     for entry in fs::read_dir("tests/scheme").expect("test dir not found") {
         let path = entry.expect("reading test dir failed").path();
         if let Some("scm") = path.extension().and_then(|e| e.to_str()) {
-            println!("TESTS: {}", path.display());
-            let results = run_scheme_test_file(&path).unwrap_or_else(|e| {
-                panic!("error running tests in {}: {}", path.display(), e);
-            });
-            println!("{:?}", results);
+            let errors: Vec<_> = run_scheme_test_file(&path)
+                .unwrap_or_else(|e| {
+                    panic!("error running tests in {}: {}", path.display(), e);
+                })
+                .into_iter()
+                .filter_map(Result::err)
+                .collect();
+            if !errors.is_empty() {
+                panic!("tests failed in {}:\n{}", path.display(), ErrorList(&errors));
+            }
         }
     }
 }
