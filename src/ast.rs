@@ -81,11 +81,7 @@ impl EnvStack {
         debug!("extended env-stack {:?}", self);
         match f(self) {
             Ok(v) => {
-                let bodies = self.last_frame_mut().rec_bodies.split_off(0);
-                let bodies = bodies
-                    .into_iter()
-                    .map(|b| Ok(Rc::new(Ast::expr(&b, self, NonTail)?)))
-                    .collect::<Result<_, Value>>()?;
+                let bodies = self.reap_rec_bodies()?;
                 self.pop();
                 debug!("done with extended env-stack {:?} -> {:?}", self, bodies);
                 Ok((bodies, v))
@@ -121,6 +117,14 @@ impl EnvStack {
     fn last_frame_mut(&mut self) -> &mut EnvFrame {
         let last = self.frames.len() - 1;
         &mut self.frames[last]
+    }
+
+    fn reap_rec_bodies(&mut self) -> Result<Vec<Rc<Ast>>, Value> {
+        let bodies = self.last_frame_mut().rec_bodies.split_off(0);
+        bodies
+            .into_iter()
+            .map(|b| Ok(Rc::new(Ast::expr(&b, self, NonTail)?)))
+            .collect::<Result<_, Value>>()
     }
 
     pub fn resolve_rec(&mut self, env: Gc<GcCell<Env>>) -> Result<(), Value> {
@@ -229,41 +233,52 @@ pub enum Ast {
     },
     EnvRef(EnvIndex),
     Seq(Vec<Rc<Ast>>),
+    Bind(Body),
 }
 
 #[derive(Debug)]
 pub struct Lambda {
     pub params: Params,
+    pub body: Rc<Body>,
+}
+
+#[derive(Debug)]
+pub struct Body {
     pub bound_exprs: Vec<Rc<Ast>>,
-    pub body: Rc<Ast>,
+    pub expr: Rc<Ast>,
+}
+
+impl Body {
+    fn new(bound_exprs: Vec<Rc<Ast>>, expr: Ast) -> Self {
+        Body {
+            bound_exprs,
+            expr: Rc::new(expr),
+        }
+    }
 }
 
 impl Lambda {
-    fn new(
-        params: Params,
-        exprs: &[&lexpr::Value],
-        stack: &mut EnvStack,
-    ) -> Result<Self, Value> {
-        let (bound_exprs, body_exprs) = stack.with_pushed(&params, |stack| -> Result<_, Value> {
-            let mut body_exprs = Vec::with_capacity(exprs.len());
-            let mut definitions = true;
-            for (i, expr) in exprs.into_iter().enumerate() {
-                let tail = if i + 1 == exprs.len() { Tail } else { NonTail };
-                if definitions {
-                    if let Some(ast) = Ast::definition(expr, stack, tail)? {
-                        body_exprs.push(Rc::new(ast));
-                        definitions = false;
+    fn new(params: Params, exprs: &[&lexpr::Value], stack: &mut EnvStack) -> Result<Self, Value> {
+        let (bound_exprs, body_exprs) =
+            stack.with_pushed(&params, |stack| -> Result<_, Value> {
+                let mut body_exprs = Vec::with_capacity(exprs.len());
+                let mut definitions = true;
+                for (i, expr) in exprs.into_iter().enumerate() {
+                    let tail = if i + 1 == exprs.len() { Tail } else { NonTail };
+                    if definitions {
+                        if let Some(ast) = Ast::definition(expr, stack, tail)? {
+                            body_exprs.push(Rc::new(ast));
+                            definitions = false;
+                        }
+                    } else {
+                        body_exprs.push(Rc::new(Ast::expr(expr, stack, tail)?));
                     }
-                } else {
-                    body_exprs.push(Rc::new(Ast::expr(expr, stack, tail)?));
                 }
-            }
-            Ok(body_exprs)
-        })?;
+                Ok(body_exprs)
+            })?;
         Ok(Lambda {
             params,
-            bound_exprs,
-            body: Rc::new(Ast::Seq(body_exprs)),
+            body: Rc::new(Body::new(bound_exprs, Ast::Seq(body_exprs))),
         })
     }
 }
@@ -313,6 +328,18 @@ impl Ast {
                             return Err(make_error!("`lambda` expects at least two forms"));
                         }
                         Ast::lambda(args[0], &args[1..], stack)
+                    }
+                    Some("begin") => {
+                        let exprs = proper_list(rest).map_err(syntax_error)?;
+                        let seq = exprs
+                            .iter()
+                            .enumerate()
+                            .map(|(i, expr)| {
+                                let tail = if i + 1 == exprs.len() { tail } else { NonTail };
+                                Ok(Rc::new(Ast::expr(expr, stack, tail)?))
+                            })
+                            .collect::<Result<_, Value>>()?;
+                        Ok(Ast::Seq(seq))
                     }
                     Some("define") => {
                         return Err(make_error!("`define` not allowed in expression context"));
@@ -385,6 +412,38 @@ impl Ast {
                                 return Ok(None);
                             }
                             _ => return Err(make_error!("invalid `define' form")),
+                        }
+                    }
+                    Some("begin") => {
+                        // TODO: if this contains definitions /and/ expressions,
+                        // the definitions are not resolved before evaluating
+                        // the expressions.
+                        let exprs = proper_list(rest).map_err(syntax_error)?;
+                        // TODO: This is similar to `Lambda::new`
+                        let mut body_exprs = Vec::with_capacity(exprs.len());
+                        let mut definitions = true;
+                        for (i, expr) in exprs.iter().enumerate() {
+                            let tail = if i + 1 == exprs.len() { tail } else { NonTail };
+                            if definitions {
+                                if let Some(ast) = Ast::definition(expr, stack, tail)? {
+                                    body_exprs.push(Rc::new(ast));
+                                    definitions = false;
+                                }
+                            } else {
+                                body_exprs.push(Rc::new(Ast::expr(expr, stack, tail)?))
+                            }
+                        }
+                        if body_exprs.is_empty() {
+                            return Ok(None);
+                        }
+                        let bodies = stack.reap_rec_bodies()?;
+                        if bodies.is_empty() {
+                            return Ok(Some(Ast::Seq(body_exprs)));
+                        } else {
+                            return Ok(Some(Ast::Bind(Body {
+                                bound_exprs: bodies,
+                                expr: Rc::new(Ast::Seq(body_exprs)),
+                            })));
                         }
                     }
                     _ => {}

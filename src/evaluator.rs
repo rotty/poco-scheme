@@ -149,6 +149,16 @@ fn eval_step(ast: Rc<Ast>, env: Gc<GcCell<Env>>) -> Result<Thunk, Value> {
             }
             unreachable!()
         }
+        Ast::Bind(body) => {
+            let pos = env
+                .borrow_mut()
+                .init_rec(body.bound_exprs.len());
+            for (i, expr) in body.bound_exprs.iter().enumerate() {
+                let value = eval(Rc::clone(expr), env.clone())?;
+                env.borrow_mut().resolve_rec(pos + i, value);
+            }
+            eval_step(Rc::clone(&body.expr), env)
+        }
         Ast::If {
             cond,
             consequent,
@@ -189,12 +199,12 @@ pub fn apply(op: Value, args: Vec<Value>) -> Result<Thunk, Value> {
             let Closure { lambda, env } = boxed.as_ref();
             // TODO: This code is duplicated in `resolve_rec`
             let env = lambda.params.bind(args, env.clone())?;
-            let pos = env.borrow_mut().init_rec(lambda.bound_exprs.len());
-            for (i, expr) in lambda.bound_exprs.iter().enumerate() {
+            let pos = env.borrow_mut().init_rec(lambda.body.bound_exprs.len());
+            for (i, expr) in lambda.body.bound_exprs.iter().enumerate() {
                 let value = eval(Rc::clone(expr), env.clone())?;
                 env.borrow_mut().resolve_rec(pos + i, value);
             }
-            eval_step(Rc::clone(&lambda.body), env.clone())
+            eval_step(Rc::clone(&lambda.body.expr), env.clone())
         }
         _ => Err(make_error!(
             "non-applicable object in operator position: {}",
@@ -220,7 +230,7 @@ pub fn tail_call(op: Value, operands: &[Rc<Ast>], parent_env: Gc<GcCell<Env>>) -
                 .collect::<Result<Vec<Value>, _>>()?;
             let values = lambda.params.values(args)?;
             parent_env.borrow_mut().reset(Gc::clone(env), values);
-            Ok(Thunk::Eval(Rc::clone(&lambda.body), parent_env))
+            Ok(Thunk::Eval(Rc::clone(&lambda.body.expr), parent_env))
         }
         _ => Err(make_error!(
             "non-applicable object in operator position: {}",

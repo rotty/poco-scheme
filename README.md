@@ -13,8 +13,4 @@ infancy.
 ## Next steps
 
 - Implement more syntax in `lexpr`:
-  - Comments
   - Quote syntactic shorthand (i.e. `'`).
-- Implement `begin`
-- The above all are needed (or useful) to extend the Scheme tests,
-  which should give the codebase pretty good test coverage.
