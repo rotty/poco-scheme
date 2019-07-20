@@ -32,7 +32,13 @@ where
 type TestResult = Result<(), TestError>;
 
 #[derive(Debug)]
-enum TestError {
+struct TestError {
+    description: lexpr::Value,
+    kind: TestErrorKind,
+}
+
+#[derive(Debug)]
+enum TestErrorKind {
     EvalFail(EvalError),
     Unexpected {
         result: Value,
@@ -42,18 +48,21 @@ enum TestError {
 
 impl fmt::Display for TestError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        use TestError::*;
-        match self {
-            EvalFail(e) => write!(f, "evaluation failed: {}", e),
-            Unexpected { result, expected } => {
-                write!(f, "test failed: got {}, expected {}", result, expected)
-            }
+        use TestErrorKind::*;
+        match &self.kind {
+            EvalFail(e) => write!(f, "{}: evaluation failed: {}", self.description, e),
+            Unexpected { result, expected } => write!(
+                f,
+                "{} failed: got {}, expected {}",
+                self.description, result, expected
+            ),
         }
     }
 }
 
 #[derive(Debug)]
 struct Test {
+    description: lexpr::Value,
     expr: lexpr::Value,
     expected: lexpr::Value,
 }
@@ -78,22 +87,29 @@ impl Test {
             .and_then(|(elts, rest)| if rest.is_null() { Some(elts) } else { None })
             .ok_or_else(|| format_err!("expected list, got {}", spec))?;
         // TODO (lexpr): This would benefit from some pattern matches on S-expression level
-        if parts.len() != 4 || parts[0] != &sexp!(check) || parts[2] != &sexp!(#"=>") {
+        if parts.len() != 5 || parts[0] != &sexp!(check) || parts[3] != &sexp!(#"=>") {
             return Err(format_err!(
-                "test case needs to be of form `(check <test> => <result>)`"
+                "test case needs to be of form `(check <description> <test> => <result>)`"
             ));
         }
         Ok(Test {
-            expr: parts[1].clone(),
-            expected: parts[3].clone(),
+            description: parts[1].clone(),
+            expr: parts[2].clone(),
+            expected: parts[4].clone(),
         })
     }
     fn run(&self) -> TestResult {
-        let result = eval(&self.expr).map_err(TestError::EvalFail)?;
+        let result = eval(&self.expr).map_err(|e| TestError {
+            description: self.description.clone(),
+            kind: TestErrorKind::EvalFail(e),
+        })?;
         if result.to_datum().as_ref() != Some(&self.expected) {
-            return Err(TestError::Unexpected {
-                result,
-                expected: self.expected.clone(),
+            return Err(TestError {
+                description: self.description.clone(),
+                kind: TestErrorKind::Unexpected {
+                    result,
+                    expected: self.expected.clone(),
+                }
             });
         }
         Ok(())
@@ -127,7 +143,11 @@ fn run_scheme_tests() {
                 .filter_map(Result::err)
                 .collect();
             if !errors.is_empty() {
-                panic!("tests failed in {}:\n{}", path.display(), ErrorList(&errors));
+                panic!(
+                    "failed tests in {}:\n{}",
+                    path.display(),
+                    ErrorList(&errors)
+                );
             }
         }
     }
