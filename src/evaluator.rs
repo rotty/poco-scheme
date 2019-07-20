@@ -133,13 +133,21 @@ fn eval_step(ast: Rc<Ast>, env: Gc<GcCell<Env>>) -> Result<Thunk, Value> {
     match &*ast {
         Ast::EnvRef(idx) => Ok(Thunk::Resolved(env.borrow_mut().lookup(idx))),
         Ast::Datum(value) => Ok(Thunk::Resolved(value.into())),
-        Ast::Lambda { params, body } => {
+        Ast::Lambda(lambda) => {
             let closure = Value::Closure(Box::new(Closure {
-                params: Rc::clone(params),
-                body: Rc::clone(body),
+                lambda: Rc::clone(lambda),
                 env: env.clone(),
             }));
             Ok(Thunk::Resolved(closure))
+        }
+        Ast::Seq(exprs) => {
+            for (i, expr) in exprs.into_iter().enumerate() {
+                if i + 1 == exprs.len() {
+                    return eval_step(Rc::clone(expr), env.clone());
+                }
+                eval(Rc::clone(expr), env.clone())?;
+            }
+            unreachable!()
         }
         Ast::If {
             cond,
@@ -165,21 +173,6 @@ fn eval_step(ast: Rc<Ast>, env: Gc<GcCell<Env>>) -> Result<Thunk, Value> {
             let op = eval(Rc::clone(op), env.clone())?;
             tail_call(op, operands, env)
         }
-        Ast::LetRec { bound_exprs, exprs } => {
-            // TODO: This code is duplicated in `resolve_rec`
-            let pos = env.borrow_mut().init_rec(bound_exprs.len());
-            for (i, expr) in bound_exprs.into_iter().enumerate() {
-                let value = eval(Rc::clone(expr), env.clone())?;
-                env.borrow_mut().resolve_rec(pos + i, value);
-            }
-            for (i, expr) in exprs.into_iter().enumerate() {
-                if i + 1 == exprs.len() {
-                    return Ok(Thunk::Eval(Rc::clone(expr), env.clone()));
-                }
-                eval(Rc::clone(expr), env.clone())?;
-            }
-            unreachable!()
-        }
     }
 }
 
@@ -193,9 +186,15 @@ pub fn apply(op: Value, args: Vec<Value>) -> Result<Thunk, Value> {
     match op {
         Value::PrimOp(_, ref op) => Ok(Thunk::Resolved(op(&args)?)),
         Value::Closure(boxed) => {
-            let Closure { params, body, env } = boxed.as_ref();
-            let env = params.bind(args, env.clone())?;
-            eval_step(Rc::clone(body), env)
+            let Closure { lambda, env } = boxed.as_ref();
+            // TODO: This code is duplicated in `resolve_rec`
+            let env = lambda.params.bind(args, env.clone())?;
+            let pos = env.borrow_mut().init_rec(lambda.bound_exprs.len());
+            for (i, expr) in lambda.bound_exprs.iter().enumerate() {
+                let value = eval(Rc::clone(expr), env.clone())?;
+                env.borrow_mut().resolve_rec(pos + i, value);
+            }
+            eval_step(Rc::clone(&lambda.body), env.clone())
         }
         _ => Err(make_error!(
             "non-applicable object in operator position: {}",
@@ -214,14 +213,14 @@ pub fn tail_call(op: Value, operands: &[Rc<Ast>], parent_env: Gc<GcCell<Env>>) -
             Ok(Thunk::Resolved(op(&args)?))
         }
         Value::Closure(boxed) => {
-            let Closure { params, body, env } = boxed.as_ref();
+            let Closure { lambda, env } = boxed.as_ref();
             let args = operands
                 .into_iter()
                 .map(|operand| eval(Rc::clone(operand), parent_env.clone()))
                 .collect::<Result<Vec<Value>, _>>()?;
-            let values = params.values(args)?;
+            let values = lambda.params.values(args)?;
             parent_env.borrow_mut().reset(Gc::clone(env), values);
-            Ok(Thunk::Eval(Rc::clone(body), parent_env))
+            Ok(Thunk::Eval(Rc::clone(&lambda.body), parent_env))
         }
         _ => Err(make_error!(
             "non-applicable object in operator position: {}",

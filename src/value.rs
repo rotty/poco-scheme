@@ -1,15 +1,11 @@
 use std::{
-    fmt::{self, Write, Display},
+    fmt::{self, Display, Write},
     rc::Rc,
 };
 
-use gc::{Gc, GcCell, Finalize};
+use gc::{Finalize, Gc, GcCell};
 
-use crate::{
-    ast::{Ast, Params},
-    evaluator::Env,
-    OpResult,
-};
+use crate::{ast::Lambda, evaluator::Env, OpResult};
 
 #[derive(Clone)]
 pub enum Value {
@@ -25,8 +21,7 @@ pub enum Value {
 
 #[derive(Clone)]
 pub struct Closure {
-    pub params: Rc<Params>,
-    pub body: Rc<Ast>,
+    pub lambda: Rc<Lambda>,
     pub env: Gc<GcCell<Env>>,
 }
 

@@ -213,18 +213,11 @@ fn param_rest(rest: &lexpr::Value) -> Result<Box<str>, SyntaxError> {
 #[derive(Debug)]
 pub enum Ast {
     Datum(lexpr::Value),
-    Lambda {
-        params: Rc<Params>,
-        body: Rc<Ast>,
-    },
+    Lambda(Rc<Lambda>),
     If {
         cond: Rc<Ast>,
         consequent: Rc<Ast>,
         alternative: Rc<Ast>,
-    },
-    LetRec {
-        bound_exprs: Vec<Rc<Ast>>,
-        exprs: Vec<Rc<Ast>>,
     },
     Apply {
         op: Rc<Ast>,
@@ -235,6 +228,44 @@ pub enum Ast {
         operands: Vec<Rc<Ast>>,
     },
     EnvRef(EnvIndex),
+    Seq(Vec<Rc<Ast>>),
+}
+
+#[derive(Debug)]
+pub struct Lambda {
+    pub params: Params,
+    pub bound_exprs: Vec<Rc<Ast>>,
+    pub body: Rc<Ast>,
+}
+
+impl Lambda {
+    fn new(
+        params: Params,
+        exprs: &[&lexpr::Value],
+        stack: &mut EnvStack,
+    ) -> Result<Self, Value> {
+        let (bound_exprs, body_exprs) = stack.with_pushed(&params, |stack| -> Result<_, Value> {
+            let mut body_exprs = Vec::with_capacity(exprs.len());
+            let mut definitions = true;
+            for (i, expr) in exprs.into_iter().enumerate() {
+                let tail = if i + 1 == exprs.len() { Tail } else { NonTail };
+                if definitions {
+                    if let Some(ast) = Ast::definition(expr, stack, tail)? {
+                        body_exprs.push(Rc::new(ast));
+                        definitions = false;
+                    }
+                } else {
+                    body_exprs.push(Rc::new(Ast::expr(expr, stack, tail)?));
+                }
+            }
+            Ok(body_exprs)
+        })?;
+        Ok(Lambda {
+            params,
+            bound_exprs,
+            body: Rc::new(Ast::Seq(body_exprs)),
+        })
+    }
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
@@ -365,45 +396,13 @@ impl Ast {
         Ok(Some(Ast::expr(expr, stack, tail)?))
     }
 
-    fn let_rec(
-        params: &Params,
-        exprs: &[&lexpr::Value],
-        stack: &mut EnvStack,
-        tail: TailPosition,
-    ) -> Result<Self, Value> {
-        let (bound_exprs, body_exprs) = stack.with_pushed(params, |stack| -> Result<_, Value> {
-            let mut body_exprs = Vec::with_capacity(exprs.len());
-            let mut definitions = true;
-            for (i, expr) in exprs.into_iter().enumerate() {
-                let tail = if i + 1 == exprs.len() { tail } else { NonTail };
-                if definitions {
-                    if let Some(ast) = Ast::definition(expr, stack, tail)? {
-                        body_exprs.push(Rc::new(ast));
-                        definitions = false;
-                    }
-                } else {
-                    body_exprs.push(Rc::new(Ast::expr(expr, stack, tail)?));
-                }
-            }
-            Ok(body_exprs)
-        })?;
-        Ok(Ast::LetRec {
-            bound_exprs,
-            exprs: body_exprs,
-        })
-    }
-
     fn lambda(
         params: &lexpr::Value,
         body: &[&lexpr::Value],
         stack: &mut EnvStack,
     ) -> Result<Self, Value> {
         let params = Params::new(params).map_err(syntax_error)?;
-        let body = Rc::new(Ast::let_rec(&params, body, stack, Tail)?);
-        Ok(Ast::Lambda {
-            params: Rc::new(params),
-            body,
-        })
+        Ok(Ast::Lambda(Rc::new(Lambda::new(params, body, stack)?)))
     }
 }
 
