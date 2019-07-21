@@ -4,7 +4,7 @@ use gc::{Gc, GcCell};
 
 #[macro_export]
 macro_rules! make_error {
-    ($fmt:literal) => { Value::String($fmt.into()) };
+    ($fmt:literal) => { Value::String(Box::new($fmt.into())) };
     ($fmt:literal, $($args:expr),*) => { $crate::Value::String(format!($fmt, $($args),*).into()) }
 }
 
@@ -21,14 +21,18 @@ use ast::{Ast, TailPosition};
 use evaluator::{eval as eval_ast, Env};
 
 pub use evaluator::EvalError;
-pub use value::Value;
+pub use value::{PrimOp, Value};
 
 use TailPosition::*;
 
 macro_rules! prim_op {
-    ($name:tt, $func:expr) => {
-        ($name, Value::prim_op($name, $func))
-    };
+    ($name:tt, $func:expr) => {{
+        static OP: PrimOp = PrimOp {
+            name: $name,
+            func: $func,
+        };
+        ($name, Value::PrimOp(&OP))
+    }};
 }
 
 fn initial_env() -> Vec<(&'static str, Value)> {

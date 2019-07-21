@@ -189,7 +189,7 @@ pub enum Thunk {
 
 pub fn apply(op: Value, args: Vec<Value>) -> Result<Thunk, Value> {
     match op {
-        Value::PrimOp(_, ref op) => Ok(Thunk::Resolved(op(&args)?)),
+        Value::PrimOp(op) => Ok(Thunk::Resolved((op.func)(&args)?)),
         Value::Closure(boxed) => {
             let Closure { lambda, env } = boxed.as_ref();
             // TODO: This code is duplicated in `resolve_rec`
@@ -214,12 +214,12 @@ pub fn tail_call(
     parent_env: Gc<GcCell<Env>>,
 ) -> Result<Thunk, Value> {
     match op {
-        Value::PrimOp(_, ref op) => {
+        Value::PrimOp(op) => {
             let args = operands
                 .iter()
                 .map(|operand| eval(Rc::clone(operand), parent_env.clone()))
                 .collect::<Result<Vec<Value>, _>>()?;
-            Ok(Thunk::Resolved(op(&args)?))
+            Ok(Thunk::Resolved((op.func)(&args)?))
         }
         Value::Closure(boxed) => {
             let Closure { lambda, env } = boxed.as_ref();

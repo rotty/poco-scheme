@@ -7,16 +7,26 @@ use gc::{Finalize, Gc, GcCell};
 
 use crate::{ast::Lambda, evaluator::Env, OpResult};
 
+// Note that currently, this type is designed to be two machine words on a
+// 64-bit architecture. The size should be one machine word on both 32-bit and
+// 64-bit architectures, but achieving that would require going full-on unsafe,
+// so for now, we settle for 2 machine words.
 #[derive(Clone)]
 pub enum Value {
     Fixnum(i64),
-    String(Box<str>),
+    String(Box<String>),
     Bool(bool),
     Null,
     Cons(Gc<[Value; 2]>),
-    Symbol(Box<str>), // TODO: interning
-    PrimOp(&'static str, fn(&[Value]) -> OpResult),
+    Symbol(Box<String>), // TODO: interning
+    PrimOp(&'static PrimOp),
     Closure(Box<Closure>),
+}
+
+#[derive(Clone)]
+pub struct PrimOp {
+    pub name: &'static str,
+    pub func: fn(&[Value]) -> OpResult,
 }
 
 #[derive(Clone)]
@@ -26,10 +36,6 @@ pub struct Closure {
 }
 
 impl Value {
-    pub fn prim_op(name: &'static str, f: fn(&[Value]) -> OpResult) -> Self {
-        Value::PrimOp(name, f)
-    }
-
     pub fn list<I>(_elts: I) -> Self
     where
         I: IntoIterator,
@@ -65,8 +71,8 @@ impl Value {
             Null => Some(lexpr::Value::Null),
             Bool(b) => Some((*b).into()),
             Fixnum(n) => Some((*n).into()),
-            String(s) => Some(s.as_ref().into()),
-            Symbol(s) => Some(lexpr::Value::Symbol(s.clone())),
+            String(s) => Some(s.as_str().into()),
+            Symbol(s) => Some(lexpr::Value::symbol(s.as_str())),
             Cons(cell) => {
                 let cell = &*cell;
                 match (cell[0].to_datum(), cell[1].to_datum()) {
@@ -74,7 +80,7 @@ impl Value {
                     _ => None,
                 }
             }
-            PrimOp(_, _) | Closure(_) => None,
+            PrimOp(_) | Closure(_) => None,
         }
     }
 }
@@ -82,6 +88,12 @@ impl Value {
 impl From<bool> for Value {
     fn from(b: bool) -> Self {
         Value::Bool(b)
+    }
+}
+
+impl<'a> From<&'a str> for Value {
+    fn from(s: &'a str) -> Self {
+        Value::String(Box::new(s.into()))
     }
 }
 
@@ -97,8 +109,8 @@ impl From<&lexpr::Value> for Value {
                     unimplemented!()
                 }
             }
-            String(s) => Value::String(s.clone()),
-            Symbol(s) => Value::Symbol(s.clone()),
+            String(s) => s.as_ref().into(),
+            Symbol(s) => Value::Symbol(Box::new(s.as_ref().to_owned())),
             Cons(cell) => {
                 let (car, cdr) = cell.as_pair();
                 Value::Cons(Gc::new([car.into(), cdr.into()]))
@@ -122,11 +134,11 @@ impl fmt::Display for Value {
             Value::Fixnum(n) => write!(f, "{}", n),
             Value::Symbol(s) => write!(f, "{}", s),
             Value::Bool(b) => f.write_str(if *b { "#t" } else { "#f" }),
-            Value::PrimOp(name, _) => write!(f, "#<prim-op {}>", name),
+            Value::PrimOp(op) => write!(f, "#<prim-op {}>", op.name),
             Value::Closure { .. } => write!(f, "#<closure>"),
             Value::Null => write!(f, "()"),
             Value::Cons(cell) => write_cons(f, cell),
-            Value::String(s) => lexpr::Value::string(s.as_ref()).fmt(f),
+            Value::String(s) => lexpr::Value::string(s.as_str()).fmt(f),
         }
     }
 }
@@ -187,5 +199,16 @@ unsafe impl gc::Trace for Value {
     fn finalize_glue(&self) {
         self.finalize();
         impl_value_trace_body!(self, finalize_glue);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Value;
+    use std::mem;
+
+    #[test]
+    fn test_value_size() {
+        assert!(mem::size_of::<Value>() <= 2 * mem::size_of::<u64>());
     }
 }
