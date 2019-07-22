@@ -109,7 +109,7 @@ impl Test {
                 kind: TestErrorKind::Unexpected {
                     result,
                     expected: self.expected.clone(),
-                }
+                },
             });
         }
         Ok(())

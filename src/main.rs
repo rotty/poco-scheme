@@ -9,13 +9,10 @@ use r3_scheme::{eval_toplevel, EvalError};
 fn load(path: impl AsRef<Path>) -> Result<(), EvalError> {
     let file = fs::File::open(path)?;
     let parser = lexpr::Parser::from_reader(file);
-    eval_toplevel(
-        parser.map(|e| e.map_err(Into::into)),
-        |res| {
-            let _ = res?;
-            Ok(())
-        },
-    )?;
+    eval_toplevel(parser.map(|e| e.map_err(Into::into)), |res| {
+        let _ = res?;
+        Ok(())
+    })?;
     Ok(())
 }
 

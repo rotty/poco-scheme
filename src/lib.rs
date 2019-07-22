@@ -31,7 +31,6 @@ macro_rules! prim_op {
     };
 }
 
-
 fn initial_env() -> Vec<(&'static str, Value)> {
     vec![
         prim_op!("+", prim::plus),

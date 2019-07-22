@@ -90,10 +90,12 @@ impl From<&lexpr::Value> for Value {
         use lexpr::Value::*;
         match v {
             Bool(b) => Value::Bool(*b),
-            Number(n) => if let Some(n) = n.as_i64() {
-                Value::Fixnum(n)
-            } else {
-                unimplemented!()
+            Number(n) => {
+                if let Some(n) = n.as_i64() {
+                    Value::Fixnum(n)
+                } else {
+                    unimplemented!()
+                }
             }
             String(s) => Value::String(s.clone()),
             Symbol(s) => Value::Symbol(s.clone()),
@@ -164,7 +166,7 @@ macro_rules! impl_value_trace_body {
                 cell[1].$method();
             }
             Value::Closure(boxed) => {
-                let Closure  { env, .. } = boxed.as_ref();
+                let Closure { env, .. } = boxed.as_ref();
                 env.$method();
             }
             _ => {}

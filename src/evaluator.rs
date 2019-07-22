@@ -4,7 +4,7 @@ use gc::{Finalize, Gc, GcCell};
 
 use crate::{
     ast::{Ast, EnvIndex, EnvStack},
-    value::{Value, Closure},
+    value::{Closure, Value},
     OpResult,
 };
 
@@ -36,10 +36,7 @@ impl Env {
     }
 
     pub fn new_root(bindings: &[(&str, Value)]) -> (Self, EnvStack) {
-        let (idents, values): (Vec<_>, _) = bindings
-            .into_iter()
-            .cloned()
-            .unzip();
+        let (idents, values): (Vec<_>, _) = bindings.into_iter().cloned().unzip();
         let env = Env {
             parent: None,
             values: values,
@@ -150,9 +147,7 @@ fn eval_step(ast: Rc<Ast>, env: Gc<GcCell<Env>>) -> Result<Thunk, Value> {
             unreachable!()
         }
         Ast::Bind(body) => {
-            let pos = env
-                .borrow_mut()
-                .init_rec(body.bound_exprs.len());
+            let pos = env.borrow_mut().init_rec(body.bound_exprs.len());
             for (i, expr) in body.bound_exprs.iter().enumerate() {
                 let value = eval(Rc::clone(expr), env.clone())?;
                 env.borrow_mut().resolve_rec(pos + i, value);
@@ -213,7 +208,11 @@ pub fn apply(op: Value, args: Vec<Value>) -> Result<Thunk, Value> {
     }
 }
 
-pub fn tail_call(op: Value, operands: &[Rc<Ast>], parent_env: Gc<GcCell<Env>>) -> Result<Thunk, Value> {
+pub fn tail_call(
+    op: Value,
+    operands: &[Rc<Ast>],
+    parent_env: Gc<GcCell<Env>>,
+) -> Result<Thunk, Value> {
     match op {
         Value::PrimOp(_, ref op) => {
             let args = operands
