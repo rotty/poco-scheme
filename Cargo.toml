@@ -10,7 +10,7 @@ edition = "2018"
 [dependencies]
 gc = "0.3"
 log = "0.4.7"
-env_logger = "0.6.2"
+env_logger = { version = "0.6.2", default-features = false }
 lexpr = "0.2.2"
 
 [patch.crates-io]
