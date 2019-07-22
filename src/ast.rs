@@ -69,11 +69,9 @@ impl EnvStack {
     {
         match params {
             Params::Any(ident) => self.frames.push(EnvFrame::new(vec![ident.clone()])),
-            Params::Exact(idents) => self
-                .frames
-                .push(EnvFrame::new(idents.into_iter().cloned().collect())),
+            Params::Exact(idents) => self.frames.push(EnvFrame::new(idents.to_vec())),
             Params::AtLeast(idents, rest) => {
-                let mut idents: Vec<_> = idents.into_iter().cloned().collect();
+                let mut idents = idents.to_vec();
                 idents.push(rest.clone());
                 self.frames.push(EnvFrame::new(idents));
             }
@@ -178,9 +176,9 @@ impl Params {
                 } else {
                     let (named, rest) = args.split_at(names.len());
                     let values = named
-                        .into_iter()
+                        .iter()
                         .cloned()
-                        .chain(iter::once(Value::list(rest.into_iter().cloned()).into()))
+                        .chain(iter::once(Value::list(rest.iter().cloned())))
                         .collect();
                     Ok(values)
                 }
@@ -199,7 +197,7 @@ impl Params {
 
 fn param_list(params: &[&lexpr::Value]) -> Result<Vec<Box<str>>, SyntaxError> {
     params
-        .into_iter()
+        .iter()
         .map(|p| {
             p.as_symbol()
                 .ok_or(SyntaxError::ExpectedSymbol)
@@ -263,7 +261,7 @@ impl Lambda {
             stack.with_pushed(&params, |stack| -> Result<_, Value> {
                 let mut body_exprs = Vec::with_capacity(exprs.len());
                 let mut definitions = true;
-                for (i, expr) in exprs.into_iter().enumerate() {
+                for (i, expr) in exprs.iter().enumerate() {
                     let tail = if i + 1 == exprs.len() { Tail } else { NonTail };
                     if definitions {
                         if let Some(ast) = Ast::definition(expr, stack, tail)? {
@@ -342,7 +340,7 @@ impl Ast {
                         Ok(Ast::Seq(seq))
                     }
                     Some("define") => {
-                        return Err(make_error!("`define` not allowed in expression context"));
+                        Err(make_error!("`define` not allowed in expression context"))
                     }
                     Some("if") => {
                         let args = proper_list(rest).map_err(syntax_error)?;
@@ -379,80 +377,77 @@ impl Ast {
         tail: TailPosition,
     ) -> Result<Option<Ast>, Value> {
         // Check for definition, return `Ok(None)` if found
-        match expr {
-            lexpr::Value::Cons(cell) => {
-                let (first, rest) = cell.as_pair();
-                match first.as_symbol() {
-                    Some("define") => {
-                        let args = proper_list(rest).map_err(syntax_error)?;
-                        if args.len() < 2 {
-                            return Err(make_error!("`define` expects at least two forms"));
-                        }
-                        match args[0] {
-                            lexpr::Value::Symbol(ident) => {
-                                if args.len() != 2 {
-                                    return Err(make_error!(
-                                        "`define` for variable expects one value form"
-                                    ));
-                                }
-                                stack.bind_rec(ident, args[1].clone()); // TODO: clone
-                                return Ok(None);
-                            }
-                            lexpr::Value::Cons(cell) => {
-                                let ident = cell.car().as_symbol().ok_or_else(|| {
-                                    make_error!("invalid use of `define': non-identifier")
-                                })?;
-                                let body =
-                                    lexpr::Value::list(args[1..].into_iter().map(|e| (*e).clone()));
-                                let lambda = lexpr::Value::cons(
-                                    sexp!(lambda),
-                                    lexpr::Value::cons(cell.cdr().clone(), body),
-                                );
-                                stack.bind_rec(ident, lambda);
-                                return Ok(None);
-                            }
-                            _ => return Err(make_error!("invalid `define' form")),
-                        }
+        if let lexpr::Value::Cons(cell) = expr {
+            let (first, rest) = cell.as_pair();
+            match first.as_symbol() {
+                Some("define") => {
+                    let args = proper_list(rest).map_err(syntax_error)?;
+                    if args.len() < 2 {
+                        return Err(make_error!("`define` expects at least two forms"));
                     }
-                    Some("begin") => {
-                        // TODO: if this contains definitions /and/ expressions,
-                        // the definitions are not resolved before evaluating
-                        // the expressions.
-                        let exprs = proper_list(rest).map_err(syntax_error)?;
-                        // TODO: This is similar to `Lambda::new`
-                        let mut body_exprs = Vec::with_capacity(exprs.len());
-                        let mut definitions = true;
-                        for (i, expr) in exprs.iter().enumerate() {
-                            let tail = if i + 1 == exprs.len() { tail } else { NonTail };
-                            if definitions {
-                                if let Some(ast) = Ast::definition(expr, stack, tail)? {
-                                    body_exprs.push(Rc::new(ast));
-                                    definitions = false;
-                                }
-                            } else {
-                                body_exprs.push(Rc::new(Ast::expr(expr, stack, tail)?))
+                    match args[0] {
+                        lexpr::Value::Symbol(ident) => {
+                            if args.len() != 2 {
+                                return Err(make_error!(
+                                    "`define` for variable expects one value form"
+                                ));
                             }
+                            stack.bind_rec(ident, args[1].clone()); // TODO: clone
+                            Ok(None)
                         }
-                        if body_exprs.is_empty() {
-                            return Ok(None);
+                        lexpr::Value::Cons(cell) => {
+                            let ident = cell.car().as_symbol().ok_or_else(|| {
+                                make_error!("invalid use of `define': non-identifier")
+                            })?;
+                            let body = lexpr::Value::list(args[1..].iter().map(|e| (*e).clone()));
+                            let lambda = lexpr::Value::cons(
+                                sexp!(lambda),
+                                lexpr::Value::cons(cell.cdr().clone(), body),
+                            );
+                            stack.bind_rec(ident, lambda);
+                            Ok(None)
                         }
-                        let bodies = stack.reap_rec_bodies()?;
-                        if bodies.is_empty() {
-                            return Ok(Some(Ast::Seq(body_exprs)));
-                        } else {
-                            return Ok(Some(Ast::Bind(Body {
-                                bound_exprs: bodies,
-                                expr: Rc::new(Ast::Seq(body_exprs)),
-                            })));
-                        }
+                        _ => Err(make_error!("invalid `define' form")),
                     }
-                    _ => {}
                 }
+                Some("begin") => {
+                    // TODO: if this contains definitions /and/ expressions,
+                    // the definitions are not resolved before evaluating
+                    // the expressions.
+                    let exprs = proper_list(rest).map_err(syntax_error)?;
+                    // TODO: This is similar to `Lambda::new`
+                    let mut body_exprs = Vec::with_capacity(exprs.len());
+                    let mut definitions = true;
+                    for (i, expr) in exprs.iter().enumerate() {
+                        let tail = if i + 1 == exprs.len() { tail } else { NonTail };
+                        if definitions {
+                            if let Some(ast) = Ast::definition(expr, stack, tail)? {
+                                body_exprs.push(Rc::new(ast));
+                                definitions = false;
+                            }
+                        } else {
+                            body_exprs.push(Rc::new(Ast::expr(expr, stack, tail)?))
+                        }
+                    }
+                    if body_exprs.is_empty() {
+                        return Ok(None);
+                    }
+                    let bodies = stack.reap_rec_bodies()?;
+                    if bodies.is_empty() {
+                        return Ok(Some(Ast::Seq(body_exprs)));
+                    } else {
+                        return Ok(Some(Ast::Bind(Body {
+                            bound_exprs: bodies,
+                            expr: Rc::new(Ast::Seq(body_exprs)),
+                        })));
+                    }
+                }
+                _ => Ok(Some(Ast::expr(expr, stack, tail)?)),
             }
-            _ => {}
+        } else {
+            // Otherwise, it must be an expression
+            Ok(Some(Ast::expr(expr, stack, tail)?))
         }
-        // Otherwise, it must be an expression
-        Ok(Some(Ast::expr(expr, stack, tail)?))
     }
 
     fn lambda(

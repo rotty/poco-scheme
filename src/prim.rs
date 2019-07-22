@@ -36,8 +36,7 @@ pub fn plus(args: &[Value]) -> OpResult {
     if let Some((first, rest)) = args.split_first() {
         let mut sum = first
             .as_i64()
-            .ok_or_else(|| invalid_argument(first, "number"))?
-            .clone();
+            .ok_or_else(|| invalid_argument(first, "number"))?;
         for elt in rest {
             let n = elt
                 .as_i64()
@@ -46,9 +45,9 @@ pub fn plus(args: &[Value]) -> OpResult {
                 .checked_add(n)
                 .ok_or_else(|| arithmetic_overflow("addition", sum, n))?;
         }
-        Ok(Value::Fixnum(sum).into())
+        Ok(Value::Fixnum(sum))
     } else {
-        Ok(Value::number(0).into())
+        Ok(Value::number(0))
     }
 }
 
@@ -56,8 +55,7 @@ pub fn minus(args: &[Value]) -> OpResult {
     if let Some((first, rest)) = args.split_first() {
         let mut sum = first
             .as_i64()
-            .ok_or_else(|| invalid_argument(first, "number"))?
-            .clone();
+            .ok_or_else(|| invalid_argument(first, "number"))?;
         for elt in rest {
             let n = elt
                 .as_i64()
@@ -66,7 +64,7 @@ pub fn minus(args: &[Value]) -> OpResult {
                 .checked_sub(n)
                 .ok_or_else(|| arithmetic_overflow("addition", sum, n))?;
         }
-        Ok(Value::Fixnum(sum).into())
+        Ok(Value::Fixnum(sum))
     } else {
         Err(too_few_arguments("-"))
     }
@@ -76,8 +74,7 @@ pub fn times(args: &[Value]) -> OpResult {
     if let Some((first, rest)) = args.split_first() {
         let mut product = first
             .as_i64()
-            .ok_or_else(|| invalid_argument(first, "number"))?
-            .clone();
+            .ok_or_else(|| invalid_argument(first, "number"))?;
         for elt in rest {
             let n = elt
                 .as_i64()
@@ -86,9 +83,9 @@ pub fn times(args: &[Value]) -> OpResult {
                 .checked_mul(n)
                 .ok_or_else(|| arithmetic_overflow("multiplication", product, n))?;
         }
-        Ok(Value::Fixnum(product).into())
+        Ok(Value::Fixnum(product))
     } else {
-        Ok(Value::number(1).into())
+        Ok(Value::number(1))
     }
 }
 
@@ -142,10 +139,10 @@ pub fn display(args: &[Value]) -> OpResult {
 }
 
 pub fn newline(args: &[Value]) -> OpResult {
-    if args.len() != 0 {
+    if !args.is_empty() {
         // TODO: support ports
         return Err(wrong_number_of_arguments("newline", 0, args));
     }
-    write!(io::stdout(), "\n").map_err(io_error)?;
+    writeln!(io::stdout()).map_err(io_error)?;
     Ok(Value::Null)
 }

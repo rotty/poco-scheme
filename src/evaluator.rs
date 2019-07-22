@@ -36,10 +36,10 @@ impl Env {
     }
 
     pub fn new_root(bindings: &[(&str, Value)]) -> (Self, EnvStack) {
-        let (idents, values): (Vec<_>, _) = bindings.into_iter().cloned().unzip();
+        let (idents, values): (Vec<_>, _) = bindings.iter().cloned().unzip();
         let env = Env {
             parent: None,
-            values: values,
+            values,
         };
         let stack = EnvStack::initial(idents);
         (env, stack)
@@ -138,7 +138,7 @@ fn eval_step(ast: Rc<Ast>, env: Gc<GcCell<Env>>) -> Result<Thunk, Value> {
             Ok(Thunk::Resolved(closure))
         }
         Ast::Seq(exprs) => {
-            for (i, expr) in exprs.into_iter().enumerate() {
+            for (i, expr) in exprs.iter().enumerate() {
                 if i + 1 == exprs.len() {
                     return eval_step(Rc::clone(expr), env.clone());
                 }
@@ -169,7 +169,7 @@ fn eval_step(ast: Rc<Ast>, env: Gc<GcCell<Env>>) -> Result<Thunk, Value> {
         Ast::Apply { op, operands } => {
             let op = eval(Rc::clone(op), env.clone())?;
             let operands = operands
-                .into_iter()
+                .iter()
                 .map(|operand| eval(Rc::clone(operand), env.clone()))
                 .collect::<Result<Vec<_>, _>>()?;
             apply(op, operands)
@@ -216,7 +216,7 @@ pub fn tail_call(
     match op {
         Value::PrimOp(_, ref op) => {
             let args = operands
-                .into_iter()
+                .iter()
                 .map(|operand| eval(Rc::clone(operand), parent_env.clone()))
                 .collect::<Result<Vec<Value>, _>>()?;
             Ok(Thunk::Resolved(op(&args)?))
@@ -224,7 +224,7 @@ pub fn tail_call(
         Value::Closure(boxed) => {
             let Closure { lambda, env } = boxed.as_ref();
             let args = operands
-                .into_iter()
+                .iter()
                 .map(|operand| eval(Rc::clone(operand), parent_env.clone()))
                 .collect::<Result<Vec<Value>, _>>()?;
             let values = lambda.params.values(args)?;
