@@ -434,12 +434,12 @@ impl Ast {
                     }
                     let bodies = stack.reap_rec_bodies()?;
                     if bodies.is_empty() {
-                        return Ok(Some(Ast::Seq(body_exprs)));
+                        Ok(Some(Ast::Seq(body_exprs)))
                     } else {
-                        return Ok(Some(Ast::Bind(Body {
+                        Ok(Some(Ast::Bind(Body {
                             bound_exprs: bodies,
                             expr: Rc::new(Ast::Seq(body_exprs)),
-                        })));
+                        })))
                     }
                 }
                 _ => Ok(Some(Ast::expr(expr, stack, tail)?)),

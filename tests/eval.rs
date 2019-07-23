@@ -72,7 +72,7 @@ struct ErrorList<'a>(&'a [TestError]);
 impl<'a> fmt::Display for ErrorList<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         for error in self.0 {
-            write!(f, "- {}\n", error)?;
+            writeln!(f, "- {}", error)?;
         }
         Ok(())
     }
