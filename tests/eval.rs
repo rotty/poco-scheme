@@ -2,7 +2,7 @@ use std::{fmt, fs, path::Path};
 
 use lexpr::sexp;
 
-use poco_scheme::{eval, EvalError, Value};
+use poco_scheme::{EvalError, Value, Vm};
 
 // Poor man's `failure` crate emulation
 #[derive(Debug)]
@@ -99,7 +99,8 @@ impl Test {
         })
     }
     fn run(&self) -> TestResult {
-        let result = eval(&self.expr).map_err(|e| TestError {
+        let mut vm = Vm::new();
+        let result = vm.eval(&self.expr).map_err(|e| TestError {
             description: self.description.clone(),
             kind: TestErrorKind::EvalFail(e),
         })?;

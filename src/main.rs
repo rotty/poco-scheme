@@ -4,15 +4,14 @@ use std::{
     path::Path,
 };
 
-use poco_scheme::{eval_toplevel, EvalError, Value};
+use poco_scheme::{EvalError, Value, Vm};
 
-fn load(path: impl AsRef<Path>) -> Result<(), EvalError> {
+fn load(vm: &mut Vm, path: impl AsRef<Path>) -> Result<(), EvalError> {
     let file = fs::File::open(path)?;
     let parser = lexpr::Parser::from_reader(file);
-    eval_toplevel(parser.map(|e| e.map_err(Into::into)), |res| {
+    for res in vm.process(parser) {
         let _ = res?;
-        Ok(())
-    })?;
+    }
     Ok(())
 }
 
@@ -20,28 +19,22 @@ fn main() -> Result<(), EvalError> {
     env_logger::init();
 
     let args: Vec<_> = env::args_os().skip(1).collect();
+    let mut vm = Vm::new();
     if args.is_empty() {
         let input = io::BufReader::new(io::stdin());
-        eval_toplevel(
-            input.lines().map(|line| {
-                let line = line?;
-                Ok(line.parse()?)
-            }),
-            |res| {
-                match res {
-                    Ok(value) => {
-                        if value != Value::Unspecified {
-                            println!("{}", value);
-                        }
+        for res in vm.process::<_, EvalError>(input.lines().map(|line| Ok(line?.parse()?))) {
+            match res {
+                Ok(value) => {
+                    if value != Value::Unspecified {
+                        println!("{}", value);
                     }
-                    Err(e) => println!("; error: {}", e),
                 }
-                Ok(())
-            },
-        )?;
+                Err(e) => println!("; error: {}", e),
+            }
+        }
     } else {
         for filename in &args {
-            load(filename)?;
+            load(&mut vm, filename)?;
         }
     }
     Ok(())
