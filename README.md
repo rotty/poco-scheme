@@ -14,3 +14,4 @@ infancy.
 
 - Implement more syntax in `lexpr`:
   - Quote syntactic shorthand (i.e. `'`).
+- Add a transformation of the AST to some kind of bytecode.
