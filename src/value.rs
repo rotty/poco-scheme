@@ -13,7 +13,7 @@ use crate::{ast::Lambda, evaluator::Env, OpResult};
 // so for now, we settle for 2 machine words.
 #[derive(Clone, PartialEq)]
 pub enum Value {
-    Fixnum(i64),
+    Fixnum(isize),
     String(Box<String>),
     Bool(bool),
     Null,
@@ -59,12 +59,12 @@ impl Value {
 
     pub fn number<T>(n: T) -> Self
     where
-        T: Into<i64>,
+        T: Into<isize>,
     {
         Value::Fixnum(n.into())
     }
 
-    pub fn as_i64(&self) -> Option<i64> {
+    pub fn as_fixnum(&self) -> Option<isize> {
         match self {
             Value::Fixnum(n) => Some(*n),
             _ => None,
@@ -84,7 +84,7 @@ impl Value {
             Null => Some(lexpr::Value::Null),
             Unspecified => Some(lexpr::Value::Nil),
             Bool(b) => Some((*b).into()),
-            Fixnum(n) => Some((*n).into()),
+            Fixnum(n) => Some((*n as i64).into()),
             String(s) => Some(s.as_str().into()),
             Symbol(s) => Some(lexpr::Value::symbol(s.as_str())),
             Cons(cell) => {
@@ -118,7 +118,11 @@ impl From<&lexpr::Value> for Value {
             Bool(b) => Value::Bool(*b),
             Number(n) => {
                 if let Some(n) = n.as_i64() {
-                    Value::Fixnum(n)
+                    if n <= isize::max_value() as i64 {
+                        Value::Fixnum(n as isize)
+                    } else {
+                        unimplemented!()
+                    }
                 } else {
                     unimplemented!()
                 }
@@ -224,6 +228,6 @@ mod tests {
 
     #[test]
     fn test_value_size() {
-        assert!(mem::size_of::<Value>() <= 2 * mem::size_of::<u64>());
+        assert!(mem::size_of::<Value>() <= 2 * mem::size_of::<usize>());
     }
 }
