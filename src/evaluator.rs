@@ -25,8 +25,7 @@ impl Env {
     pub fn init_rec(&mut self, n: usize) -> usize {
         let pos = self.values.len();
         for _ in 0..n {
-            // TODO: use better value here
-            self.values.push(Value::Null);
+            self.values.push(Value::Unspecified);
         }
         pos
     }

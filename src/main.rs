@@ -4,7 +4,7 @@ use std::{
     path::Path,
 };
 
-use poco_scheme::{eval_toplevel, EvalError};
+use poco_scheme::{eval_toplevel, EvalError, Value};
 
 fn load(path: impl AsRef<Path>) -> Result<(), EvalError> {
     let file = fs::File::open(path)?;
@@ -29,7 +29,11 @@ fn main() -> Result<(), EvalError> {
             }),
             |res| {
                 match res {
-                    Ok(value) => println!("{}", value),
+                    Ok(value) => {
+                        if value != Value::Unspecified {
+                            println!("{}", value);
+                        }
+                    }
                     Err(e) => println!("; error: {}", e),
                 }
                 Ok(())
