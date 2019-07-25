@@ -1,10 +1,10 @@
 [package]
-name = "r3-scheme"
+name = "poco-scheme"
 description = "A toy Scheme implementation"
 version = "0.0.1"
 authors = ["Andreas Rottmann <mail@r0tty.org>"]
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/rotty/r3-scheme"
+repository = "https://github.com/rotty/poco-scheme"
 edition = "2018"
 
 [dependencies]
@@ -15,3 +15,8 @@ lexpr = "0.2.2"
 
 [patch.crates-io]
 lexpr = { git = "https://github.com/rotty/lexpr-rs" }
+
+[profile.release]
+lto = true
+opt-level = 3
+codegen-units = 1

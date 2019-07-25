@@ -4,7 +4,7 @@ use std::{
     path::Path,
 };
 
-use r3_scheme::{eval_toplevel, EvalError};
+use poco_scheme::{eval_toplevel, EvalError};
 
 fn load(path: impl AsRef<Path>) -> Result<(), EvalError> {
     let file = fs::File::open(path)?;

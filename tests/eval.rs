@@ -2,7 +2,7 @@ use std::{fmt, fs, path::Path};
 
 use lexpr::sexp;
 
-use r3_scheme::{eval, EvalError, Value};
+use poco_scheme::{eval, EvalError, Value};
 
 // Poor man's `failure` crate emulation
 #[derive(Debug)]
