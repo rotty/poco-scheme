@@ -3,7 +3,7 @@ use std::{fmt, io, rc::Rc};
 use gc::{Finalize, Gc, GcCell};
 
 use crate::{
-    ast::{Ast, EnvIndex, EnvStack},
+    ast::{Ast, EnvIndex},
     value::{Closure, Value},
     OpResult,
 };
@@ -15,6 +15,13 @@ pub struct Env {
 }
 
 impl Env {
+    pub fn initial(values: Vec<Value>) -> Self {
+        Env {
+            parent: None,
+            values,
+        }
+    }
+
     pub fn new(parent: Gc<GcCell<Env>>, values: Vec<Value>) -> Self {
         Env {
             parent: Some(parent),
@@ -32,16 +39,6 @@ impl Env {
 
     pub fn resolve_rec(&mut self, offset: usize, value: Value) {
         self.values[offset] = value;
-    }
-
-    pub fn new_root(bindings: &[(&str, Value)]) -> (Self, EnvStack) {
-        let (idents, values): (Vec<_>, _) = bindings.iter().cloned().unzip();
-        let env = Env {
-            parent: None,
-            values,
-        };
-        let stack = EnvStack::initial(idents);
-        (env, stack)
     }
 
     pub fn lookup(&self, idx: &EnvIndex) -> Value {
