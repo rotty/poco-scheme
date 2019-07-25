@@ -11,10 +11,7 @@ edition = "2018"
 gc = "0.3"
 log = "0.4.7"
 env_logger = { version = "0.6.2", default-features = false }
-lexpr = "0.2.2"
-
-[patch.crates-io]
-lexpr = { git = "https://github.com/rotty/lexpr-rs" }
+lexpr = "0.2.3"
 
 [profile.release]
 lto = true
