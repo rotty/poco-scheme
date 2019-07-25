@@ -11,12 +11,13 @@ use crate::{ast::Lambda, evaluator::Env, OpResult};
 // 64-bit architecture. The size should be one machine word on both 32-bit and
 // 64-bit architectures, but achieving that would require going full-on unsafe,
 // so for now, we settle for 2 machine words.
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub enum Value {
     Fixnum(i64),
     String(Box<String>),
     Bool(bool),
     Null,
+    Unspecified,
     Cons(Gc<[Value; 2]>),
     Symbol(Box<String>), // TODO: interning
     PrimOp(&'static PrimOp),
@@ -27,6 +28,18 @@ pub enum Value {
 pub struct PrimOp {
     pub name: &'static str,
     pub func: fn(&[Value]) -> OpResult,
+}
+
+impl PartialEq<PrimOp> for PrimOp {
+    fn eq(&self, other: &PrimOp) -> bool {
+        self as *const _ == other as *const _
+    }
+}
+
+impl PartialEq<Closure> for Closure {
+    fn eq(&self, _: &Closure) -> bool {
+        false
+    }
 }
 
 #[derive(Clone)]
@@ -69,6 +82,7 @@ impl Value {
         use Value::*;
         match self {
             Null => Some(lexpr::Value::Null),
+            Unspecified => Some(lexpr::Value::Nil),
             Bool(b) => Some((*b).into()),
             Fixnum(n) => Some((*n).into()),
             String(s) => Some(s.as_str().into()),
@@ -137,6 +151,7 @@ impl fmt::Display for Value {
             Value::PrimOp(op) => write!(f, "#<prim-op {}>", op.name),
             Value::Closure { .. } => write!(f, "#<closure>"),
             Value::Null => write!(f, "()"),
+            Value::Unspecified => write!(f, "#<unspecified>"),
             Value::Cons(cell) => write_cons(f, cell),
             Value::String(s) => lexpr::Value::string(s.as_str()).fmt(f),
         }

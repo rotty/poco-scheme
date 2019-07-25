@@ -57,7 +57,7 @@ pub fn eval(expr: &lexpr::Value) -> Result<Value, EvalError> {
     if let Some(ast) = Ast::definition(&expr, &mut stack, NonTail)? {
         Ok(eval_ast(Rc::new(ast), env.clone())?)
     } else {
-        Ok(Value::Null) // TODO: better value
+        Ok(Value::Unspecified)
     }
 }
 
