@@ -23,7 +23,7 @@ fn io_error(e: io::Error) -> Value {
     make_error!("I/O error: {}", e)
 }
 
-fn arithmetic_overflow(operation: &str, arg1: i64, arg2: i64) -> Value {
+fn arithmetic_overflow(operation: &str, arg1: isize, arg2: isize) -> Value {
     make_error!(
         "arithmetic overflow in {} of {} and {}",
         operation,
@@ -35,11 +35,11 @@ fn arithmetic_overflow(operation: &str, arg1: i64, arg2: i64) -> Value {
 pub fn plus(args: &[Value]) -> OpResult {
     if let Some((first, rest)) = args.split_first() {
         let mut sum = first
-            .as_i64()
+            .as_fixnum()
             .ok_or_else(|| invalid_argument(first, "number"))?;
         for elt in rest {
             let n = elt
-                .as_i64()
+                .as_fixnum()
                 .ok_or_else(|| invalid_argument(elt, "number"))?;
             sum = sum
                 .checked_add(n)
@@ -47,18 +47,18 @@ pub fn plus(args: &[Value]) -> OpResult {
         }
         Ok(Value::Fixnum(sum))
     } else {
-        Ok(Value::number(0))
+        Ok(Value::number(0isize))
     }
 }
 
 pub fn minus(args: &[Value]) -> OpResult {
     if let Some((first, rest)) = args.split_first() {
         let mut sum = first
-            .as_i64()
+            .as_fixnum()
             .ok_or_else(|| invalid_argument(first, "number"))?;
         for elt in rest {
             let n = elt
-                .as_i64()
+                .as_fixnum()
                 .ok_or_else(|| invalid_argument(elt, "number"))?;
             sum = sum
                 .checked_sub(n)
@@ -73,11 +73,11 @@ pub fn minus(args: &[Value]) -> OpResult {
 pub fn times(args: &[Value]) -> OpResult {
     if let Some((first, rest)) = args.split_first() {
         let mut product = first
-            .as_i64()
+            .as_fixnum()
             .ok_or_else(|| invalid_argument(first, "number"))?;
         for elt in rest {
             let n = elt
-                .as_i64()
+                .as_fixnum()
                 .ok_or_else(|| invalid_argument(elt, "number"))?;
             product = product
                 .checked_mul(n)
@@ -85,20 +85,20 @@ pub fn times(args: &[Value]) -> OpResult {
         }
         Ok(Value::Fixnum(product))
     } else {
-        Ok(Value::number(1))
+        Ok(Value::number(1isize))
     }
 }
 
 fn num_cmp<F>(args: &[Value], cmp: F) -> OpResult
 where
-    F: Fn(&i64, &i64) -> bool,
+    F: Fn(&isize, &isize) -> bool,
 {
     for w in args.windows(2) {
         let n1 = w[0]
-            .as_i64()
+            .as_fixnum()
             .ok_or_else(|| invalid_argument(&w[0], "number"))?;
         let n2 = w[1]
-            .as_i64()
+            .as_fixnum()
             .ok_or_else(|| invalid_argument(&w[1], "number"))?;
         if !cmp(&n1, &n2) {
             return Ok(Value::from(false));
@@ -108,23 +108,23 @@ where
 }
 
 pub fn eq(args: &[Value]) -> OpResult {
-    num_cmp(args, i64::ge)
+    num_cmp(args, isize::ge)
 }
 
 pub fn lt(args: &[Value]) -> OpResult {
-    num_cmp(args, i64::lt)
+    num_cmp(args, isize::lt)
 }
 
 pub fn le(args: &[Value]) -> OpResult {
-    num_cmp(args, i64::le)
+    num_cmp(args, isize::le)
 }
 
 pub fn gt(args: &[Value]) -> OpResult {
-    num_cmp(args, i64::gt)
+    num_cmp(args, isize::gt)
 }
 
 pub fn ge(args: &[Value]) -> OpResult {
-    num_cmp(args, i64::ge)
+    num_cmp(args, isize::ge)
 }
 
 pub fn display(args: &[Value]) -> OpResult {
