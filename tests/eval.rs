@@ -44,6 +44,7 @@ enum TestErrorKind {
         result: Value,
         expected: lexpr::Value,
     },
+    UnexpectedSuccess(Value),
 }
 
 impl fmt::Display for TestError {
@@ -56,6 +57,7 @@ impl fmt::Display for TestError {
                 "{} failed: got {}, expected {}",
                 self.description, result, expected
             ),
+            UnexpectedSuccess(value) => write!(f, "unexpected success with {}", value),
         }
     }
 }
@@ -64,7 +66,13 @@ impl fmt::Display for TestError {
 struct Test {
     description: lexpr::Value,
     expr: lexpr::Value,
-    expected: lexpr::Value,
+    kind: TestKind,
+}
+
+#[derive(Debug)]
+enum TestKind {
+    Expect(lexpr::Value),
+    ExpectFailure,
 }
 
 struct ErrorList<'a>(&'a [TestError]);
@@ -87,33 +95,50 @@ impl Test {
             .and_then(|(elts, rest)| if rest.is_null() { Some(elts) } else { None })
             .ok_or_else(|| format_err!("expected list, got {}", spec))?;
         // TODO (lexpr): This would benefit from some pattern matches on S-expression level
-        if parts.len() != 5 || parts[0] != &sexp!(check) || parts[3] != &sexp!(#"=>") {
-            return Err(format_err!(
-                "test case needs to be of form `(check <description> <test> => <result>)`"
-            ));
+        if parts.len() == 5 && parts[0] == &sexp!(check) && parts[3] == &sexp!(#"=>") {
+            Ok(Test {
+                description: parts[1].clone(),
+                expr: parts[2].clone(),
+                kind: TestKind::Expect(parts[4].clone()),
+            })
+        } else if parts.len() == 3 && parts[0] == &sexp!(#"check-fail") {
+            Ok(Test {
+                description: parts[1].clone(),
+                expr: parts[2].clone(),
+                kind: TestKind::ExpectFailure,
+            })
+        } else {
+            Err(format_err!("malformed test case {}", spec))
         }
-        Ok(Test {
-            description: parts[1].clone(),
-            expr: parts[2].clone(),
-            expected: parts[4].clone(),
-        })
     }
     fn run(&self) -> TestResult {
         let mut vm = Vm::new();
-        let result = vm.eval(&self.expr).map_err(|e| TestError {
-            description: self.description.clone(),
-            kind: TestErrorKind::EvalFail(e),
-        })?;
-        if result.to_datum().as_ref() != Some(&self.expected) {
-            return Err(TestError {
-                description: self.description.clone(),
-                kind: TestErrorKind::Unexpected {
-                    result,
-                    expected: self.expected.clone(),
-                },
-            });
+        match &self.kind {
+            TestKind::Expect(value) => {
+                let result = vm.eval(&self.expr).map_err(|e| TestError {
+                    description: self.description.clone(),
+                    kind: TestErrorKind::EvalFail(e),
+                })?;
+                if result.to_datum().as_ref() != Some(&value) {
+                    Err(TestError {
+                        description: self.description.clone(),
+                        kind: TestErrorKind::Unexpected {
+                            result,
+                            expected: value.clone(),
+                        },
+                    })
+                } else {
+                    Ok(())
+                }
+            }
+            TestKind::ExpectFailure => match vm.eval(&self.expr) {
+                Err(_) => Ok(()),
+                Ok(value) => Err(TestError {
+                    description: self.description.clone(),
+                    kind: TestErrorKind::UnexpectedSuccess(value),
+                }),
+            },
         }
-        Ok(())
     }
 }
 
