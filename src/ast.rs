@@ -358,13 +358,24 @@ impl Ast {
                     }
                     Some("if") => {
                         let args = proper_list(rest)?;
-                        if args.len() != 3 {
-                            return Err(syntax_error!("`if` expects at exactly three forms"));
+                        if args.len() < 2 {
+                            return Err(syntax_error!("`if` expects at least two forms"));
                         }
+                        let cond = Ast::expr(&args[0], stack, NonTail)?.into();
+                        let consequent = Ast::expr(&args[1], stack, tail)?.into();
+                        let alternative = if args.len() == 3 {
+                            Ast::expr(&args[2], stack, tail)?.into()
+                        } else if args.len() == 2 {
+                            Rc::new(Ast::Datum(lexpr::Value::Nil))
+                        } else {
+                            return Err(syntax_error!(
+                                "`if` expects at least no more than three forms"
+                            ));
+                        };
                         Ok(Ast::If {
-                            cond: Ast::expr(&args[0], stack, NonTail)?.into(),
-                            consequent: Ast::expr(&args[1], stack, tail)?.into(),
-                            alternative: Ast::expr(&args[2], stack, tail)?.into(),
+                            cond,
+                            consequent,
+                            alternative,
                         })
                     }
                     _ => {
