@@ -127,6 +127,29 @@ pub fn ge(args: &[Value]) -> OpResult {
     num_cmp(args, isize::ge)
 }
 
+pub fn modulo(args: &[Value]) -> OpResult {
+    if args.len() != 2 {
+        return Err(wrong_number_of_arguments("mod", 2, args));
+    }
+    let n1 = args[0]
+        .as_fixnum()
+        .ok_or_else(|| invalid_argument(&args[0], "fixnum"))?;
+    let n2 = args[1]
+        .as_fixnum()
+        .ok_or_else(|| invalid_argument(&args[1], "fixnum"))?;
+    Ok(Value::Fixnum(n1 % n2))
+}
+
+pub fn sqrt(args: &[Value]) -> OpResult {
+    if args.len() != 1 {
+        return Err(wrong_number_of_arguments("sqrt", 1, args));
+    }
+    let n = args[0]
+        .as_fixnum()
+        .ok_or_else(|| invalid_argument(&args[0], "fixnum"))?;
+    Ok(Value::Fixnum((n as f64).sqrt() as isize))
+}
+
 pub fn display(args: &[Value]) -> OpResult {
     if args.len() != 1 {
         // TODO: support ports

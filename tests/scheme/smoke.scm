@@ -11,7 +11,7 @@
 (check "unarity closure application" ((lambda (x) (+ x 23)) 42) => 65)
 (check "binary closure application" ((lambda (x y) (+ x y)) 23 42) => 65)
 
-(check "if expression in operrator position"
+(check "if expression in operator position"
        ((lambda (mul? x y) ((if mul? * +) x y)) #f 2 3)
        => 5)
 
@@ -21,6 +21,8 @@
           (define bar foo)
           (+ bar foo)))
        => 2)
+
+(check "modulo" (modulo 42 9) => 6)
 
 ;; `define` and recursive bindings
 (check "tail-recursive sum"
