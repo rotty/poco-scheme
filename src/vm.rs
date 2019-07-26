@@ -29,6 +29,8 @@ fn initial_env() -> Vec<(&'static str, Value)> {
         prim_op!(">", prim::gt),
         prim_op!(">=", prim::ge),
         prim_op!("=", prim::eq),
+        prim_op!("modulo", prim::modulo),
+        prim_op!("sqrt", prim::sqrt),
         prim_op!("display", prim::display),
         prim_op!("newline", prim::newline),
     ]
