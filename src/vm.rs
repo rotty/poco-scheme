@@ -59,6 +59,7 @@ impl Vm {
         if let Some(ast) = Ast::definition(&expr, &mut self.stack, NonTail)? {
             Ok(eval_ast(Rc::new(ast), self.env.clone())?)
         } else {
+            self.resolve_stack()?;
             Ok(Value::Unspecified)
         }
     }
@@ -71,6 +72,10 @@ impl Vm {
             vm: self,
             source: source.into_iter(),
         }
+    }
+
+    fn resolve_stack(&mut self) -> Result<(), EvalError> {
+        self.stack.resolve_rec(self.env.clone()).map_err(Into::into)
     }
 }
 
@@ -92,17 +97,15 @@ where
                 .map_err(Into::into)
                 .and_then(|expr| Ok(Ast::definition(&expr, &mut self.vm.stack, NonTail)?));
             if let Some(ast) = res.transpose() {
-                return Some(
-                    self.vm
-                        .stack
-                        .resolve_rec(self.vm.env.clone())
-                        .map_err(Into::into)
-                        .and_then(|_| {
-                            ast.and_then(|ast| Ok(eval_ast(Rc::new(ast), self.vm.env.clone())?))
-                        }),
-                );
+                return Some(self.vm.resolve_stack().and_then(|_| {
+                    ast.and_then(|ast| Ok(eval_ast(Rc::new(ast), self.vm.env.clone())?))
+                }));
             }
         }
-        None
+        // Force syntax check of accumulated bodies
+        match self.vm.resolve_stack() {
+            Ok(_) => None,
+            Err(e) => Some(Err(e)),
+        }
     }
 }

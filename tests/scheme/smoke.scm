@@ -42,3 +42,5 @@
          (define bar 23)
          (foo 42))
        => 65)
+(check-fail "detect undefined identifier in definition body"
+            (define (foo) bar))
