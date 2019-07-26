@@ -63,6 +63,10 @@ impl EnvStack {
         }
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.frames.is_empty()
+    }
+
     pub fn with_pushed<T, F>(&mut self, params: &Params, f: F) -> Result<(Vec<Rc<Ast>>, T), Value>
     where
         F: FnOnce(&mut Self) -> Result<T, Value>,
