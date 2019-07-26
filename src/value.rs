@@ -134,6 +134,7 @@ impl From<&lexpr::Value> for Value {
                 Value::Cons(Gc::new([car.into(), cdr.into()]))
             }
             Null => Value::Null,
+            Nil => Value::Unspecified,
             _ => unimplemented!(),
         }
     }
