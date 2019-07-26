@@ -5,7 +5,7 @@ use std::{
 
 use gc::{Finalize, Gc, GcCell};
 
-use crate::{ast::Lambda, evaluator::Env, OpResult};
+use crate::{ast::Lambda, vm::Env, OpResult};
 
 // Note that currently, this type is designed to be two machine words on a
 // 64-bit architecture. The size should be one machine word on both 32-bit and
@@ -42,7 +42,7 @@ impl PartialEq<Closure> for Closure {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Closure {
     pub lambda: Rc<Lambda>,
     pub env: Gc<GcCell<Env>>,

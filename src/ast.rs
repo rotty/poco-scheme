@@ -4,11 +4,15 @@ use std::{
     rc::Rc,
 };
 
-use gc::{Gc, GcCell};
 use lexpr::sexp;
 use log::debug;
 
-use crate::{eval_ast, evaluator::Env, make_error, value::Value};
+use crate::Value;
+
+macro_rules! syntax_error {
+    ($fmt:literal) => { SyntaxError::Message($fmt.into()) };
+    ($fmt:literal, $($args:expr),*) => { SyntaxError::Message(format!($fmt, $($args),*)) }
+}
 
 #[derive(Debug)]
 pub enum Params {
@@ -67,9 +71,13 @@ impl EnvStack {
         self.frames.is_empty()
     }
 
-    pub fn with_pushed<T, F>(&mut self, params: &Params, f: F) -> Result<(Vec<Rc<Ast>>, T), Value>
+    pub fn with_pushed<T, F>(
+        &mut self,
+        params: &Params,
+        f: F,
+    ) -> Result<(Vec<Rc<Ast>>, T), SyntaxError>
     where
-        F: FnOnce(&mut Self) -> Result<T, Value>,
+        F: FnOnce(&mut Self) -> Result<T, SyntaxError>,
     {
         match params {
             Params::Any(ident) => self.frames.push(EnvFrame::new(vec![ident.clone()])),
@@ -121,24 +129,12 @@ impl EnvStack {
         &mut self.frames[last]
     }
 
-    fn reap_rec_bodies(&mut self) -> Result<Vec<Rc<Ast>>, Value> {
+    pub fn reap_rec_bodies(&mut self) -> Result<Vec<Rc<Ast>>, SyntaxError> {
         let bodies = self.last_frame_mut().rec_bodies.split_off(0);
         bodies
             .into_iter()
             .map(|b| Ok(Rc::new(Ast::expr(&b, self, NonTail)?)))
-            .collect::<Result<_, Value>>()
-    }
-
-    pub fn resolve_rec(&mut self, env: Gc<GcCell<Env>>) -> Result<(), Value> {
-        let pos = env
-            .borrow_mut()
-            .init_rec(self.last_frame_mut().rec_bodies.len());
-        let bodies = self.last_frame_mut().rec_bodies.split_off(0);
-        for (i, body) in bodies.into_iter().enumerate() {
-            let value = eval_ast(Rc::new(Ast::expr(&body, self, NonTail)?), env.clone())?;
-            env.borrow_mut().resolve_rec(pos + i, value);
-        }
-        Ok(())
+            .collect::<Result<_, _>>()
     }
 }
 
@@ -152,6 +148,14 @@ impl Params {
                 (params, rest) => Ok(Params::AtLeast(param_list(&params)?, param_rest(rest)?)),
             },
             _ => Ok(Params::Any(param_rest(v)?)),
+        }
+    }
+
+    pub fn env_slots(&self) -> usize {
+        match self {
+            Params::Any(_) => 1,
+            Params::Exact(names) => names.len(),
+            Params::AtLeast(names, _) => names.len() + 1,
         }
     }
 
@@ -188,14 +192,6 @@ impl Params {
                 }
             }
         }
-    }
-
-    pub fn bind(
-        &self,
-        args: Vec<Value>,
-        parent: Gc<GcCell<Env>>,
-    ) -> Result<Gc<GcCell<Env>>, Value> {
-        Ok(Gc::new(GcCell::new(Env::new(parent, self.values(args)?))))
     }
 }
 
@@ -260,9 +256,13 @@ impl Body {
 }
 
 impl Lambda {
-    fn new(params: Params, exprs: &[&lexpr::Value], stack: &mut EnvStack) -> Result<Self, Value> {
+    fn new(
+        params: Params,
+        exprs: &[&lexpr::Value],
+        stack: &mut EnvStack,
+    ) -> Result<Self, SyntaxError> {
         let (bound_exprs, body_exprs) =
-            stack.with_pushed(&params, |stack| -> Result<_, Value> {
+            stack.with_pushed(&params, |stack| -> Result<_, SyntaxError> {
                 let mut body_exprs = Vec::with_capacity(exprs.len());
                 let mut definitions = true;
                 for (i, expr) in exprs.iter().enumerate() {
@@ -283,6 +283,16 @@ impl Lambda {
             body: Rc::new(Body::new(bound_exprs, Ast::Seq(body_exprs))),
         })
     }
+
+    pub fn env_slots(&self) -> usize {
+        self.params.env_slots() + self.body.bound_exprs.len()
+    }
+
+    pub fn alloc_locals(&self, args: Vec<Value>) -> Result<Vec<Value>, Value> {
+        let mut locals = self.params.values(args)?;
+        locals.resize(self.env_slots(), Value::Unspecified);
+        Ok(locals)
+    }
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
@@ -298,41 +308,41 @@ impl Ast {
         expr: &lexpr::Value,
         stack: &mut EnvStack,
         tail: TailPosition,
-    ) -> Result<Ast, Value> {
+    ) -> Result<Ast, SyntaxError> {
         debug!("forming AST for {} in {:?}", expr, stack);
         match expr {
-            lexpr::Value::Null => Err(make_error!("empty application")),
-            lexpr::Value::Nil => Err(make_error!("#nil unsupported")),
-            lexpr::Value::Char(_) => Err(make_error!("characters are currently unsupported")),
-            lexpr::Value::Keyword(_) => Err(make_error!("keywords are currently unsupported")),
-            lexpr::Value::Bytes(_) => Err(make_error!("byte vectors are currently unsupported")),
-            lexpr::Value::Vector(_) => Err(make_error!("vectors are currently unsupported")),
+            lexpr::Value::Null => Err(SyntaxError::EmptyApplication),
+            lexpr::Value::Nil
+            | lexpr::Value::Char(_)
+            | lexpr::Value::Keyword(_)
+            | lexpr::Value::Bytes(_)
+            | lexpr::Value::Vector(_) => Err(SyntaxError::UnsupportedDatum(expr.clone())),
             lexpr::Value::Bool(_) => Ok(Ast::Datum(expr.clone())),
             lexpr::Value::Number(_) => Ok(Ast::Datum(expr.clone())),
             lexpr::Value::String(_) => Ok(Ast::Datum(expr.clone())),
             lexpr::Value::Symbol(ident) => stack
                 .lookup(ident)
                 .map(Ast::EnvRef)
-                .ok_or_else(|| make_error!("unbound identifier `{}'", ident)),
+                .ok_or_else(|| SyntaxError::UnboundIdentifier(ident.to_owned())),
             lexpr::Value::Cons(cell) => {
                 let (first, rest) = cell.as_pair();
                 match first.as_symbol() {
                     Some("quote") => {
-                        let args = proper_list(rest).map_err(syntax_error)?;
+                        let args = proper_list(rest)?;
                         if args.len() != 1 {
-                            return Err(make_error!("`quote' expects a single form"));
+                            return Err(syntax_error!("`quote' expects a single form"));
                         }
                         Ok(Ast::Datum(args[0].clone()))
                     }
                     Some("lambda") => {
-                        let args = proper_list(rest).map_err(syntax_error)?;
+                        let args = proper_list(rest)?;
                         if args.len() < 2 {
-                            return Err(make_error!("`lambda` expects at least two forms"));
+                            return Err(syntax_error!("`lambda` expects at least two forms"));
                         }
                         Ast::lambda(args[0], &args[1..], stack)
                     }
                     Some("begin") => {
-                        let exprs = proper_list(rest).map_err(syntax_error)?;
+                        let exprs = proper_list(rest)?;
                         let seq = exprs
                             .iter()
                             .enumerate()
@@ -340,16 +350,16 @@ impl Ast {
                                 let tail = if i + 1 == exprs.len() { tail } else { NonTail };
                                 Ok(Rc::new(Ast::expr(expr, stack, tail)?))
                             })
-                            .collect::<Result<_, Value>>()?;
+                            .collect::<Result<_, _>>()?;
                         Ok(Ast::Seq(seq))
                     }
                     Some("define") => {
-                        Err(make_error!("`define` not allowed in expression context"))
+                        Err(syntax_error!("`define` not allowed in expression context"))
                     }
                     Some("if") => {
-                        let args = proper_list(rest).map_err(syntax_error)?;
+                        let args = proper_list(rest)?;
                         if args.len() != 3 {
-                            return Err(make_error!("`if` expects at exactly three forms"));
+                            return Err(syntax_error!("`if` expects at exactly three forms"));
                         }
                         Ok(Ast::If {
                             cond: Ast::expr(&args[0], stack, NonTail)?.into(),
@@ -358,12 +368,12 @@ impl Ast {
                         })
                     }
                     _ => {
-                        let arg_exprs = proper_list(rest).map_err(syntax_error)?;
+                        let arg_exprs = proper_list(rest)?;
                         let op = Ast::expr(first, stack, NonTail)?.into();
                         let operands = arg_exprs
                             .into_iter()
                             .map(|arg| Ok(Ast::expr(arg, stack, NonTail)?.into()))
-                            .collect::<Result<Vec<Rc<Ast>>, Value>>()?;
+                            .collect::<Result<Vec<Rc<Ast>>, _>>()?;
                         if tail == Tail {
                             Ok(Ast::TailCall { op, operands })
                         } else {
@@ -379,20 +389,20 @@ impl Ast {
         expr: &lexpr::Value,
         stack: &mut EnvStack,
         tail: TailPosition,
-    ) -> Result<Option<Ast>, Value> {
+    ) -> Result<Option<Ast>, SyntaxError> {
         // Check for definition, return `Ok(None)` if found
         if let lexpr::Value::Cons(cell) = expr {
             let (first, rest) = cell.as_pair();
             match first.as_symbol() {
                 Some("define") => {
-                    let args = proper_list(rest).map_err(syntax_error)?;
+                    let args = proper_list(rest)?;
                     if args.len() < 2 {
-                        return Err(make_error!("`define` expects at least two forms"));
+                        return Err(syntax_error!("`define` expects at least two forms"));
                     }
                     match args[0] {
                         lexpr::Value::Symbol(ident) => {
                             if args.len() != 2 {
-                                return Err(make_error!(
+                                return Err(syntax_error!(
                                     "`define` for variable expects one value form"
                                 ));
                             }
@@ -401,7 +411,7 @@ impl Ast {
                         }
                         lexpr::Value::Cons(cell) => {
                             let ident = cell.car().as_symbol().ok_or_else(|| {
-                                make_error!("invalid use of `define': non-identifier")
+                                syntax_error!("invalid use of `define': non-identifier")
                             })?;
                             let body = lexpr::Value::list(args[1..].iter().map(|e| (*e).clone()));
                             let lambda = lexpr::Value::cons(
@@ -411,14 +421,14 @@ impl Ast {
                             stack.bind_rec(ident, lambda);
                             Ok(None)
                         }
-                        _ => Err(make_error!("invalid `define' form")),
+                        _ => Err(syntax_error!("invalid `define' form")),
                     }
                 }
                 Some("begin") => {
                     // TODO: if this contains definitions /and/ expressions,
                     // the definitions are not resolved before evaluating
                     // the expressions.
-                    let exprs = proper_list(rest).map_err(syntax_error)?;
+                    let exprs = proper_list(rest)?;
                     // TODO: This is similar to `Lambda::new`
                     let mut body_exprs = Vec::with_capacity(exprs.len());
                     let mut definitions = true;
@@ -458,27 +468,36 @@ impl Ast {
         params: &lexpr::Value,
         body: &[&lexpr::Value],
         stack: &mut EnvStack,
-    ) -> Result<Self, Value> {
-        let params = Params::new(params).map_err(syntax_error)?;
+    ) -> Result<Self, SyntaxError> {
+        let params = Params::new(params)?;
         Ok(Ast::Lambda(Rc::new(Lambda::new(params, body, stack)?)))
     }
 }
 
 #[derive(Debug)]
 pub enum SyntaxError {
+    EmptyApplication,
+    UnsupportedDatum(lexpr::Value),
     ExpectedSymbol,
     ImproperList(Vec<lexpr::Value>, lexpr::Value),
     NonList(lexpr::Value),
+    Message(String),
+    UnboundIdentifier(Box<str>),
 }
 
 impl fmt::Display for SyntaxError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        use SyntaxError::*;
         match self {
-            SyntaxError::ExpectedSymbol => write!(f, "expected symbol"),
-            SyntaxError::ImproperList(elts, tail) => {
+            EmptyApplication => write!(f, "empty application"),
+            UnsupportedDatum(datum) => write!(f, "unsupported datum `{}`", datum),
+            ExpectedSymbol => write!(f, "expected symbol"),
+            ImproperList(elts, tail) => {
                 write!(f, "improper list `({} . {})'", ShowSlice(&elts), tail)
             }
-            SyntaxError::NonList(value) => write!(f, "non-list `{}'", value),
+            NonList(value) => write!(f, "non-list `{}'", value),
+            Message(msg) => write!(f, "{}", msg),
+            UnboundIdentifier(ident) => write!(f, "unbound identifier `{}`", ident),
         }
     }
 }
@@ -519,8 +538,4 @@ fn proper_list(expr: &lexpr::Value) -> Result<Vec<&lexpr::Value>, SyntaxError> {
         lexpr::Value::Null => Ok(Vec::new()),
         value => Err(SyntaxError::NonList(value.clone())),
     }
-}
-
-fn syntax_error(e: SyntaxError) -> Value {
-    make_error!("syntax error: {}", e)
 }

@@ -8,14 +8,9 @@ macro_rules! make_error {
 type OpResult = Result<Value, Value>;
 
 mod ast;
-mod evaluator;
 mod prim;
 mod value;
 mod vm;
 
-// TODO: Fix the somehwat confusing eval names
-use evaluator::eval as eval_ast;
-
-pub use evaluator::EvalError;
 pub use value::{PrimOp, Value};
-pub use vm::Vm;
+pub use vm::{EvalError, Vm};
