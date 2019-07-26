@@ -1,6 +1,7 @@
 use std::{fmt, io, rc::Rc};
 
 use gc::{Finalize, Gc, GcCell};
+use log::debug;
 
 use crate::{
     ast::{Ast, EnvIndex},
@@ -45,13 +46,6 @@ impl Env {
         self.lookup_internal(idx.level(), idx.slot())
     }
 
-    pub fn reset(&mut self, parent: Gc<GcCell<Env>>, values: Vec<Value>) {
-        self.parent = Some(parent);
-        // Not sure if cloning here is a good idea vs. re-assigning, but let's
-        // see.
-        self.values = values;
-    }
-
     fn lookup_internal(&self, level: usize, slot: usize) -> Value {
         // Use recursion to get arround the borrow checker here. Should be
         // turned into an iterative solution, but should not matter too much for
@@ -61,7 +55,7 @@ impl Env {
         } else {
             self.parent
                 .as_ref()
-                .unwrap()
+                .expect("invalid environment reference")
                 .borrow()
                 .lookup_internal(level - 1, slot)
         }
@@ -123,6 +117,7 @@ pub fn eval(ast: Rc<Ast>, env: Gc<GcCell<Env>>) -> OpResult {
 }
 
 fn eval_step(ast: Rc<Ast>, env: Gc<GcCell<Env>>) -> Result<Thunk, Value> {
+    debug!("eval-step: {:?} in {:?}", &ast, &env);
     match &*ast {
         Ast::EnvRef(idx) => Ok(Thunk::Resolved(env.borrow_mut().lookup(idx))),
         Ast::Datum(value) => Ok(Thunk::Resolved(value.into())),
@@ -172,7 +167,12 @@ fn eval_step(ast: Rc<Ast>, env: Gc<GcCell<Env>>) -> Result<Thunk, Value> {
         }
         Ast::TailCall { op, operands } => {
             let op = eval(Rc::clone(op), env.clone())?;
-            tail_call(op, operands, env)
+            let operands = operands
+                .iter()
+                .map(|operand| eval(Rc::clone(operand), env.clone()))
+                .collect::<Result<Vec<_>, _>>()?;
+            // TODO: this should be implemented more efficently
+            apply(op, operands)
         }
     }
 }
@@ -196,36 +196,6 @@ pub fn apply(op: Value, args: Vec<Value>) -> Result<Thunk, Value> {
                 env.borrow_mut().resolve_rec(pos + i, value);
             }
             eval_step(Rc::clone(&lambda.body.expr), env.clone())
-        }
-        _ => Err(make_error!(
-            "non-applicable object in operator position: {}",
-            op
-        )),
-    }
-}
-
-pub fn tail_call(
-    op: Value,
-    operands: &[Rc<Ast>],
-    parent_env: Gc<GcCell<Env>>,
-) -> Result<Thunk, Value> {
-    match op {
-        Value::PrimOp(op) => {
-            let args = operands
-                .iter()
-                .map(|operand| eval(Rc::clone(operand), parent_env.clone()))
-                .collect::<Result<Vec<Value>, _>>()?;
-            Ok(Thunk::Resolved((op.func)(&args)?))
-        }
-        Value::Closure(boxed) => {
-            let Closure { lambda, env } = boxed.as_ref();
-            let args = operands
-                .iter()
-                .map(|operand| eval(Rc::clone(operand), parent_env.clone()))
-                .collect::<Result<Vec<Value>, _>>()?;
-            let values = lambda.params.values(args)?;
-            parent_env.borrow_mut().reset(Gc::clone(env), values);
-            Ok(Thunk::Eval(Rc::clone(&lambda.body.expr), parent_env))
         }
         _ => Err(make_error!(
             "non-applicable object in operator position: {}",
