@@ -44,5 +44,19 @@
          (define bar 23)
          (foo 42))
        => 65)
+
+(check "multiple nested definitions"
+       (begin
+         (define (prime? n)
+           (define bound (sqrt n))
+           (define (loop divisor)
+             (if (= 0 (modulo n divisor))
+                 #f
+                 (loop (+ divisor 2))))
+           (loop 3))
+         (prime? 42))
+       => #f)
+
+;; Syntax errors
 (check-fail "detect undefined identifier in definition body"
             (define (foo) bar))
