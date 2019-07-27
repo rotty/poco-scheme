@@ -1,13 +1,9 @@
-use std::{
-    fmt::{self, Write},
-    iter,
-    rc::Rc,
-};
+use std::{fmt, iter, rc::Rc};
 
 use lexpr::sexp;
 use log::debug;
 
-use crate::Value;
+use crate::{util::ShowSlice, Value};
 
 macro_rules! syntax_error {
     ($fmt:literal) => { SyntaxError::Message($fmt.into()) };
@@ -510,23 +506,6 @@ impl fmt::Display for SyntaxError {
             Message(msg) => write!(f, "{}", msg),
             UnboundIdentifier(ident) => write!(f, "unbound identifier `{}`", ident),
         }
-    }
-}
-
-struct ShowSlice<'a, T>(&'a [T]);
-
-impl<'a, T> fmt::Display for ShowSlice<'a, T>
-where
-    T: fmt::Display,
-{
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        for (i, value) in self.0.iter().enumerate() {
-            value.fmt(f)?;
-            if i + 1 < self.0.len() {
-                f.write_char(' ')?;
-            }
-        }
-        Ok(())
     }
 }
 

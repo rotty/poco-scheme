@@ -1,13 +1,13 @@
 use std::io::{self, Write};
 
-use crate::{OpResult, Value};
+use crate::Value;
 
-fn invalid_argument(arg: &Value, expected: &str) -> Value {
-    make_error!("invalid argument: {}, expected {}", arg, expected)
+fn invalid_argument(arg: Value, expected: &str) -> Value {
+    make_error!("invalid argument, expected {}", expected; arg)
 }
 
-fn too_few_arguments(procedure: &str) -> Value {
-    make_error!("too few arguments to `{}'", procedure)
+fn too_few_arguments(procedure: &str, args: &[Value]) -> Value {
+    make_error!("too few arguments to `{}'", procedure; Value::list(args.iter().cloned()))
 }
 
 fn wrong_number_of_arguments(procedure: &str, expected: usize, args: &[Value]) -> Value {
@@ -15,7 +15,8 @@ fn wrong_number_of_arguments(procedure: &str, expected: usize, args: &[Value]) -
         "wrong number of arguments to `{}': expected {}, got {}",
         procedure,
         expected,
-        args.len()
+        args.len();
+        Value::list(args.iter().cloned())
     )
 }
 
@@ -32,140 +33,143 @@ fn arithmetic_overflow(operation: &str, arg1: isize, arg2: isize) -> Value {
     )
 }
 
-pub fn plus(args: &[Value]) -> OpResult {
+pub fn plus(args: &[Value]) -> Value {
     if let Some((first, rest)) = args.split_first() {
-        let mut sum = first
+        let mut sum = try_result!(first
             .as_fixnum()
-            .ok_or_else(|| invalid_argument(first, "number"))?;
+            .ok_or_else(|| invalid_argument(first.clone(), "number")));
         for elt in rest {
-            let n = elt
+            let n = try_result!(elt
                 .as_fixnum()
-                .ok_or_else(|| invalid_argument(elt, "number"))?;
-            sum = sum
+                .ok_or_else(|| invalid_argument(elt.clone(), "number")));
+            sum = try_result!(sum
                 .checked_add(n)
-                .ok_or_else(|| arithmetic_overflow("addition", sum, n))?;
+                .ok_or_else(|| arithmetic_overflow("addition", sum, n)));
         }
-        Ok(Value::Fixnum(sum))
+        Value::Fixnum(sum)
     } else {
-        Ok(Value::number(0isize))
+        Value::number(0isize)
     }
 }
 
-pub fn minus(args: &[Value]) -> OpResult {
+pub fn minus(args: &[Value]) -> Value {
     if let Some((first, rest)) = args.split_first() {
-        let mut sum = first
+        let mut sum = try_result!(first
             .as_fixnum()
-            .ok_or_else(|| invalid_argument(first, "number"))?;
+            .ok_or_else(|| invalid_argument(first.clone(), "number")));
         for elt in rest {
-            let n = elt
+            let n = try_result!(elt
                 .as_fixnum()
-                .ok_or_else(|| invalid_argument(elt, "number"))?;
-            sum = sum
+                .ok_or_else(|| invalid_argument(elt.clone(), "number")));
+            sum = try_result!(sum
                 .checked_sub(n)
-                .ok_or_else(|| arithmetic_overflow("addition", sum, n))?;
+                .ok_or_else(|| arithmetic_overflow("addition", sum, n)));
         }
-        Ok(Value::Fixnum(sum))
+        Value::Fixnum(sum)
     } else {
-        Err(too_few_arguments("-"))
+        too_few_arguments("-", args)
     }
 }
 
-pub fn times(args: &[Value]) -> OpResult {
+pub fn times(args: &[Value]) -> Value {
     if let Some((first, rest)) = args.split_first() {
-        let mut product = first
+        let mut product = try_result!(first
             .as_fixnum()
-            .ok_or_else(|| invalid_argument(first, "number"))?;
+            .ok_or_else(|| invalid_argument(first.clone(), "number")));
         for elt in rest {
-            let n = elt
+            let n = try_result!(elt
                 .as_fixnum()
-                .ok_or_else(|| invalid_argument(elt, "number"))?;
-            product = product
-                .checked_mul(n)
-                .ok_or_else(|| arithmetic_overflow("multiplication", product, n))?;
+                .ok_or_else(|| invalid_argument(elt.clone(), "number")));
+            product = try_result!(product.checked_mul(n).ok_or_else(|| arithmetic_overflow(
+                "multiplication",
+                product,
+                n
+            )));
         }
-        Ok(Value::Fixnum(product))
+        Value::Fixnum(product)
     } else {
-        Ok(Value::number(1isize))
+        Value::Fixnum(1)
     }
 }
 
-fn num_cmp<F>(args: &[Value], cmp: F) -> OpResult
+fn num_cmp<F>(args: &[Value], cmp: F) -> Value
 where
     F: Fn(&isize, &isize) -> bool,
 {
+    // TODO: this does the fixnum conversion too often
     for w in args.windows(2) {
-        let n1 = w[0]
+        let n1 = try_result!(w[0]
             .as_fixnum()
-            .ok_or_else(|| invalid_argument(&w[0], "number"))?;
-        let n2 = w[1]
+            .ok_or_else(|| invalid_argument(w[0].clone(), "number")));
+        let n2 = try_result!(w[1]
             .as_fixnum()
-            .ok_or_else(|| invalid_argument(&w[1], "number"))?;
+            .ok_or_else(|| invalid_argument(w[1].clone(), "number")));
         if !cmp(&n1, &n2) {
-            return Ok(Value::from(false));
+            return Value::from(false);
         }
     }
-    Ok(Value::from(true))
+    Value::from(true)
 }
 
-pub fn eq(args: &[Value]) -> OpResult {
+pub fn eq(args: &[Value]) -> Value {
     num_cmp(args, isize::ge)
 }
 
-pub fn lt(args: &[Value]) -> OpResult {
+pub fn lt(args: &[Value]) -> Value {
     num_cmp(args, isize::lt)
 }
 
-pub fn le(args: &[Value]) -> OpResult {
+pub fn le(args: &[Value]) -> Value {
     num_cmp(args, isize::le)
 }
 
-pub fn gt(args: &[Value]) -> OpResult {
+pub fn gt(args: &[Value]) -> Value {
     num_cmp(args, isize::gt)
 }
 
-pub fn ge(args: &[Value]) -> OpResult {
+pub fn ge(args: &[Value]) -> Value {
     num_cmp(args, isize::ge)
 }
 
-pub fn modulo(args: &[Value]) -> OpResult {
+pub fn modulo(args: &[Value]) -> Value {
     if args.len() != 2 {
-        return Err(wrong_number_of_arguments("mod", 2, args));
+        return wrong_number_of_arguments("mod", 2, args);
     }
-    let n1 = args[0]
+    let n1 = try_result!(args[0]
         .as_fixnum()
-        .ok_or_else(|| invalid_argument(&args[0], "fixnum"))?;
-    let n2 = args[1]
+        .ok_or_else(|| invalid_argument(args[0].clone(), "fixnum")));
+    let n2 = try_result!(args[1]
         .as_fixnum()
-        .ok_or_else(|| invalid_argument(&args[1], "fixnum"))?;
-    Ok(Value::Fixnum(n1 % n2))
+        .ok_or_else(|| invalid_argument(args[1].clone(), "fixnum")));
+    Value::Fixnum(n1 % n2)
 }
 
-pub fn sqrt(args: &[Value]) -> OpResult {
+pub fn sqrt(args: &[Value]) -> Value {
     if args.len() != 1 {
-        return Err(wrong_number_of_arguments("sqrt", 1, args));
+        return wrong_number_of_arguments("sqrt", 1, args);
     }
-    let n = args[0]
+    let n = try_result!(args[0]
         .as_fixnum()
-        .ok_or_else(|| invalid_argument(&args[0], "fixnum"))?;
-    Ok(Value::Fixnum((n as f64).sqrt() as isize))
+        .ok_or_else(|| invalid_argument(args[0].clone(), "fixnum")));
+    Value::Fixnum((n as f64).sqrt() as isize)
 }
 
-pub fn display(args: &[Value]) -> OpResult {
+pub fn display(args: &[Value]) -> Value {
     if args.len() != 1 {
         // TODO: support ports
-        return Err(wrong_number_of_arguments("display", 1, args));
+        return wrong_number_of_arguments("display", 1, args);
     }
     // TODO: we use the `Display` trait of `Value` here, which currently
     // uses `write` notation, not `display` notation.
-    write!(io::stdout(), "{}", args[0]).map_err(io_error)?;
-    Ok(Value::Null)
+    try_result!(write!(io::stdout(), "{}", args[0]).map_err(io_error));
+    Value::Unspecified
 }
 
-pub fn newline(args: &[Value]) -> OpResult {
+pub fn newline(args: &[Value]) -> Value {
     if !args.is_empty() {
         // TODO: support ports
-        return Err(wrong_number_of_arguments("newline", 0, args));
+        return wrong_number_of_arguments("newline", 0, args);
     }
-    writeln!(io::stdout()).map_err(io_error)?;
-    Ok(Value::Null)
+    try_result!(writeln!(io::stdout()).map_err(io_error));
+    Value::Unspecified
 }

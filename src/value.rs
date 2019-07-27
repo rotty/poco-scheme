@@ -5,7 +5,7 @@ use std::{
 
 use gc::{Finalize, Gc, GcCell};
 
-use crate::{ast::Lambda, vm::Env, OpResult};
+use crate::{ast::Lambda, util::ShowSlice, vm::Env};
 
 // Note that currently, this type is designed to be two machine words on a
 // 64-bit architecture. The size should be one machine word on both 32-bit and
@@ -22,12 +22,36 @@ pub enum Value {
     Symbol(Box<String>), // TODO: interning
     PrimOp(&'static PrimOp),
     Closure(Box<Closure>),
+    Exception(Box<Exception>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Exception {
+    pub message: String,
+    pub irritants: Vec<Value>,
+}
+
+impl Display for Exception {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str(&self.message)?;
+        if !self.irritants.is_empty() {
+            f.write_char(' ')?;
+            for (i, irritant) in self.irritants.iter().enumerate() {
+                if i + 1 == self.irritants.len() {
+                    write!(f, "{}", irritant)?;
+                } else {
+                    write!(f, "{} ", irritant)?;
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone)]
 pub struct PrimOp {
     pub name: &'static str,
-    pub func: fn(&[Value]) -> OpResult,
+    pub func: fn(&[Value]) -> Value,
 }
 
 impl PartialEq<PrimOp> for PrimOp {
@@ -49,6 +73,13 @@ pub struct Closure {
 }
 
 impl Value {
+    pub fn into_result(self) -> Result<Value, Box<Exception>> {
+        match self {
+            Value::Exception(e) => Err(e),
+            _ => Ok(self),
+        }
+    }
+
     pub fn list<I>(_elts: I) -> Self
     where
         I: IntoIterator,
@@ -94,7 +125,7 @@ impl Value {
                     _ => None,
                 }
             }
-            PrimOp(_) | Closure(_) => None,
+            PrimOp(_) | Closure(_) | Exception(_) => None,
         }
     }
 }
@@ -108,6 +139,12 @@ impl From<bool> for Value {
 impl<'a> From<&'a str> for Value {
     fn from(s: &'a str) -> Self {
         Value::String(Box::new(s.into()))
+    }
+}
+
+impl From<Box<Exception>> for Value {
+    fn from(e: Box<Exception>) -> Self {
+        Value::Exception(e)
     }
 }
 
@@ -159,6 +196,12 @@ impl fmt::Display for Value {
             Value::Unspecified => write!(f, "#<unspecified>"),
             Value::Cons(cell) => write_cons(f, cell),
             Value::String(s) => lexpr::Value::string(s.as_str()).fmt(f),
+            Value::Exception(e) => write!(
+                f,
+                "#<exception {} ({})>",
+                e.message,
+                ShowSlice(&e.irritants)
+            ),
         }
     }
 }
