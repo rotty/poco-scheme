@@ -33,15 +33,17 @@ fn arithmetic_overflow(operation: &str, arg1: isize, arg2: isize) -> Value {
     )
 }
 
+fn fixnum_arg(value: &Value) -> Result<isize, Value> {
+    value
+        .as_fixnum()
+        .ok_or_else(|| invalid_argument(value.clone(), "fixnum"))
+}
+
 pub fn plus(args: &[Value]) -> Value {
     if let Some((first, rest)) = args.split_first() {
-        let mut sum = try_result!(first
-            .as_fixnum()
-            .ok_or_else(|| invalid_argument(first.clone(), "number")));
+        let mut sum = try_result!(fixnum_arg(first));
         for elt in rest {
-            let n = try_result!(elt
-                .as_fixnum()
-                .ok_or_else(|| invalid_argument(elt.clone(), "number")));
+            let n = try_result!(fixnum_arg(elt));
             sum = try_result!(sum
                 .checked_add(n)
                 .ok_or_else(|| arithmetic_overflow("addition", sum, n)));
@@ -54,13 +56,9 @@ pub fn plus(args: &[Value]) -> Value {
 
 pub fn minus(args: &[Value]) -> Value {
     if let Some((first, rest)) = args.split_first() {
-        let mut sum = try_result!(first
-            .as_fixnum()
-            .ok_or_else(|| invalid_argument(first.clone(), "number")));
+        let mut sum = try_result!(fixnum_arg(first));
         for elt in rest {
-            let n = try_result!(elt
-                .as_fixnum()
-                .ok_or_else(|| invalid_argument(elt.clone(), "number")));
+            let n = try_result!(fixnum_arg(elt));
             sum = try_result!(sum
                 .checked_sub(n)
                 .ok_or_else(|| arithmetic_overflow("addition", sum, n)));
@@ -73,13 +71,9 @@ pub fn minus(args: &[Value]) -> Value {
 
 pub fn times(args: &[Value]) -> Value {
     if let Some((first, rest)) = args.split_first() {
-        let mut product = try_result!(first
-            .as_fixnum()
-            .ok_or_else(|| invalid_argument(first.clone(), "number")));
+        let mut product = try_result!(fixnum_arg(first));
         for elt in rest {
-            let n = try_result!(elt
-                .as_fixnum()
-                .ok_or_else(|| invalid_argument(elt.clone(), "number")));
+            let n = try_result!(fixnum_arg(elt));
             product = try_result!(product.checked_mul(n).ok_or_else(|| arithmetic_overflow(
                 "multiplication",
                 product,
@@ -96,14 +90,11 @@ fn num_cmp<F>(args: &[Value], cmp: F) -> Value
 where
     F: Fn(&isize, &isize) -> bool,
 {
-    // TODO: this does the fixnum conversion too often
+    // TODO: this does the fixnum conversion more often than necessary, since
+    // the windows overlap.
     for w in args.windows(2) {
-        let n1 = try_result!(w[0]
-            .as_fixnum()
-            .ok_or_else(|| invalid_argument(w[0].clone(), "number")));
-        let n2 = try_result!(w[1]
-            .as_fixnum()
-            .ok_or_else(|| invalid_argument(w[1].clone(), "number")));
+        let n1 = try_result!(fixnum_arg(&w[0]));
+        let n2 = try_result!(fixnum_arg(&w[1]));
         if !cmp(&n1, &n2) {
             return Value::from(false);
         }
@@ -135,12 +126,8 @@ pub fn modulo(args: &[Value]) -> Value {
     if args.len() != 2 {
         return wrong_number_of_arguments("mod", 2, args);
     }
-    let n1 = try_result!(args[0]
-        .as_fixnum()
-        .ok_or_else(|| invalid_argument(args[0].clone(), "fixnum")));
-    let n2 = try_result!(args[1]
-        .as_fixnum()
-        .ok_or_else(|| invalid_argument(args[1].clone(), "fixnum")));
+    let n1 = try_result!(fixnum_arg(&args[0]));
+    let n2 = try_result!(fixnum_arg(&args[1]));
     Value::Fixnum(n1 % n2)
 }
 
@@ -148,9 +135,7 @@ pub fn sqrt(args: &[Value]) -> Value {
     if args.len() != 1 {
         return wrong_number_of_arguments("sqrt", 1, args);
     }
-    let n = try_result!(args[0]
-        .as_fixnum()
-        .ok_or_else(|| invalid_argument(args[0].clone(), "fixnum")));
+    let n = try_result!(fixnum_arg(&args[0]));
     Value::Fixnum((n as f64).sqrt() as isize)
 }
 
