@@ -3,7 +3,7 @@ name = "poco-scheme"
 description = "A toy Scheme implementation"
 version = "0.0.1"
 authors = ["Andreas Rottmann <mail@r0tty.org>"]
-license = "MIT OR Apache-2.0"
+license = "BSD-3-Clause"
 repository = "https://github.com/rotty/poco-scheme"
 edition = "2018"
 
