@@ -6,8 +6,7 @@ use log::debug;
 use crate::{
     ast::{Ast, EnvIndex, EnvStack, Lambda, SyntaxError, TailPosition::*},
     prim,
-    value::{Closure, PrimOp, Value},
-    OpResult,
+    value::{Closure, Exception, PrimOp, Value},
 };
 
 macro_rules! prim_op {
@@ -76,7 +75,9 @@ impl Vm {
 
     pub fn eval(&mut self, expr: &lexpr::Value) -> Result<Value, EvalError> {
         if let Some(ast) = Ast::definition(&expr, &mut self.stack, NonTail)? {
-            Ok(self.eval_ast(Rc::new(ast))?)
+            self.eval_ast(Rc::new(ast))
+                .into_result()
+                .map_err(EvalError::Exception)
         } else {
             let bodies = self.stack.reap_rec_bodies()?;
             let pos = self.local_alloc(bodies.len());
@@ -95,9 +96,9 @@ impl Vm {
         }
     }
 
-    fn resolve_bodies(&mut self, bodies: &[Rc<Ast>], offset: usize) -> Result<(), Value> {
+    fn resolve_bodies(&mut self, bodies: &[Rc<Ast>], offset: usize) -> Result<(), Box<Exception>> {
         for (i, body) in bodies.iter().enumerate() {
-            let value = self.eval_ast(Rc::clone(body))?;
+            let value = self.eval_ast(Rc::clone(body)).into_result()?;
             debug!("resolved body [{}] {:?} -> {}", i, body, value);
             self.local_set(offset + i, value);
         }
@@ -122,11 +123,11 @@ impl Vm {
         }
     }
 
-    fn eval_ast(&mut self, ast: Rc<Ast>) -> OpResult {
+    fn eval_ast(&mut self, ast: Rc<Ast>) -> Value {
         let mut ast = ast;
         loop {
-            match self.eval_step(ast)? {
-                Thunk::Resolved(v) => break Ok(v),
+            match self.eval_step(ast) {
+                Thunk::Resolved(v) => break v,
                 Thunk::Eval(thunk_ast) => {
                     ast = thunk_ast;
                 }
@@ -134,30 +135,32 @@ impl Vm {
         }
     }
 
-    fn eval_step(&mut self, ast: Rc<Ast>) -> Result<Thunk, Value> {
+    fn eval_step(&mut self, ast: Rc<Ast>) -> Thunk {
         debug!("eval-step: {:?} in {:?}", &ast, &self.env);
         match &*ast {
-            Ast::EnvRef(idx) => Ok(Thunk::Resolved(self.env_lookup(idx))),
-            Ast::Datum(value) => Ok(Thunk::Resolved(value.into())),
+            Ast::EnvRef(idx) => Thunk::Resolved(self.env_lookup(idx)),
+            Ast::Datum(value) => Thunk::Resolved(value.into()),
             Ast::Lambda(lambda) => {
                 let closure = Value::Closure(Box::new(Closure {
                     lambda: Rc::clone(lambda),
                     env: self.reify_env(),
                 }));
-                Ok(Thunk::Resolved(closure))
+                Thunk::Resolved(closure)
             }
             Ast::Seq(exprs) => {
                 for (i, expr) in exprs.iter().enumerate() {
                     if i + 1 == exprs.len() {
                         return self.eval_step(Rc::clone(expr));
                     }
-                    self.eval_ast(Rc::clone(expr))?;
+                    if let v @ Value::Exception(_) = self.eval_ast(Rc::clone(expr)) {
+                        return Thunk::Resolved(v);
+                    }
                 }
                 unreachable!()
             }
             Ast::Bind(body) => {
                 let pos = self.local_alloc(body.bound_exprs.len());
-                self.resolve_bodies(&body.bound_exprs, pos)?;
+                try_result!(self.resolve_bodies(&body.bound_exprs, pos));
                 self.eval_step(Rc::clone(&body.expr))
             }
             Ast::If {
@@ -165,30 +168,41 @@ impl Vm {
                 consequent,
                 alternative,
             } => {
-                let cond = self.eval_ast(Rc::clone(cond))?;
+                let cond = try_value!(self.eval_ast(Rc::clone(cond)));
                 if cond.is_true() {
-                    Ok(Thunk::Eval(Rc::clone(consequent)))
+                    Thunk::Eval(Rc::clone(consequent))
                 } else {
-                    Ok(Thunk::Eval(Rc::clone(alternative)))
+                    Thunk::Eval(Rc::clone(alternative))
                 }
             }
             Ast::Apply { op, operands } => {
-                let op = self.eval_ast(Rc::clone(op))?;
-                let operands = operands
-                    .iter()
-                    .map(|operand| self.eval_ast(Rc::clone(operand)))
-                    .collect::<Result<Vec<_>, _>>()?;
-                Ok(Thunk::Resolved(self.apply(op, operands)?))
+                let (op, operands) = match self.eval_op_args(op, operands) {
+                    Ok(v) => v,
+                    Err(e) => return e.into(),
+                };
+                Thunk::Resolved(self.apply(op, operands))
             }
             Ast::TailCall { op, operands } => {
-                let op = self.eval_ast(Rc::clone(op))?;
-                let operands = operands
-                    .iter()
-                    .map(|operand| self.eval_ast(Rc::clone(operand)))
-                    .collect::<Result<Vec<_>, _>>()?;
+                let (op, operands) = match self.eval_op_args(op, operands) {
+                    Ok(v) => v,
+                    Err(e) => return e.into(),
+                };
                 self.tail_call(op, operands)
             }
         }
+    }
+
+    fn eval_op_args(
+        &mut self,
+        op: &Rc<Ast>,
+        operands: &[Rc<Ast>],
+    ) -> Result<(Value, Vec<Value>), Box<Exception>> {
+        let op = self.eval_ast(Rc::clone(op)).into_result()?;
+        let operands = operands
+            .iter()
+            .map(|operand| self.eval_ast(Rc::clone(operand)).into_result())
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok((op, operands))
     }
 
     fn with_env<F, R>(&mut self, env: VmEnv, f: F) -> R
@@ -202,37 +216,42 @@ impl Vm {
         res
     }
 
-    fn tail_call(&mut self, op: Value, args: Vec<Value>) -> Result<Thunk, Value> {
+    fn tail_call(&mut self, op: Value, args: Vec<Value>) -> Thunk {
         match op {
-            Value::PrimOp(op) => Ok(Thunk::Resolved((op.func)(&args)?)),
+            Value::PrimOp(op) => Thunk::Resolved((op.func)(&args)),
             Value::Closure(boxed) => {
                 let Closure { lambda, env } = boxed.as_ref();
-                self.env = VmEnv::new(lambda, args, env.clone())?;
-                self.resolve_bodies(&lambda.body.bound_exprs, lambda.params.env_slots())?;
+                self.env = try_result!(VmEnv::new(lambda, args, env.clone()));
+                try_result!(
+                    self.resolve_bodies(&lambda.body.bound_exprs, lambda.params.env_slots())
+                );
                 self.eval_step(Rc::clone(&lambda.body.expr))
             }
-            _ => Err(make_error!(
-                "non-applicable object in operator position: {}",
+            _ => make_error!(
+                "non-applicable object in operator position";
                 op
-            )),
+            )
+            .into(),
         }
     }
 
-    fn apply(&mut self, op: Value, args: Vec<Value>) -> Result<Value, Value> {
+    fn apply(&mut self, op: Value, args: Vec<Value>) -> Value {
         match op {
-            Value::PrimOp(op) => Ok((op.func)(&args)?),
+            Value::PrimOp(op) => (op.func)(&args),
             Value::Closure(boxed) => {
                 let Closure { lambda, env } = boxed.as_ref();
-                let new_env = VmEnv::new(lambda, args, env.clone())?;
+                let new_env = try_result!(VmEnv::new(lambda, args, env.clone()));
                 self.with_env(new_env, move |vm| {
-                    vm.resolve_bodies(&lambda.body.bound_exprs, lambda.params.env_slots())?;
+                    try_result!(
+                        vm.resolve_bodies(&lambda.body.bound_exprs, lambda.params.env_slots())
+                    );
                     vm.eval_ast(Rc::clone(&lambda.body.expr))
                 })
             }
-            _ => Err(make_error!(
-                "non-applicable object in operator position: {}",
+            _ => make_error!(
+                "non-applicable object in operator position";
                 op
-            )),
+            ),
         }
     }
 
@@ -290,7 +309,14 @@ where
                     self.vm
                         .resolve_bodies(&bodies, pos)
                         .map_err(Into::into)
-                        .and_then(|_| ast.and_then(|ast| Ok(self.vm.eval_ast(Rc::new(ast))?))),
+                        .and_then(|_| {
+                            ast.and_then(|ast| {
+                                self.vm
+                                    .eval_ast(Rc::new(ast))
+                                    .into_result()
+                                    .map_err(EvalError::Exception)
+                            })
+                        }),
                 );
             }
         }
@@ -404,12 +430,24 @@ pub enum Thunk {
     Eval(Rc<Ast>),
 }
 
+impl From<Value> for Thunk {
+    fn from(v: Value) -> Self {
+        Thunk::Resolved(v)
+    }
+}
+
+impl From<Box<Exception>> for Thunk {
+    fn from(e: Box<Exception>) -> Self {
+        Thunk::Resolved(Value::Exception(e))
+    }
+}
+
 #[derive(Debug)]
 pub enum EvalError {
     Io(io::Error),
     Parse(lexpr::parse::Error),
     Syntax(SyntaxError),
-    Runtime(Value),
+    Exception(Box<Exception>),
 }
 
 impl fmt::Display for EvalError {
@@ -418,7 +456,7 @@ impl fmt::Display for EvalError {
         match self {
             Io(e) => write!(f, "I/O error: {}", e),
             Parse(e) => write!(f, "parse error: {}", e),
-            Runtime(e) => write!(f, "runtime error: {}", e),
+            Exception(e) => write!(f, "runtime exception: {}", e),
             Syntax(e) => write!(f, "syntax error: {}", e),
         }
     }
@@ -430,7 +468,7 @@ impl std::error::Error for EvalError {
         match self {
             Io(e) => Some(e),
             Parse(e) => Some(e),
-            Runtime(_) => None,
+            Exception(_) => None,
             Syntax(e) => Some(e),
         }
     }
@@ -454,8 +492,14 @@ impl From<io::Error> for EvalError {
     }
 }
 
-impl From<Value> for EvalError {
-    fn from(e: Value) -> Self {
-        EvalError::Runtime(e)
+impl From<Exception> for EvalError {
+    fn from(e: Exception) -> Self {
+        EvalError::Exception(Box::new(e))
+    }
+}
+
+impl From<Box<Exception>> for EvalError {
+    fn from(e: Box<Exception>) -> Self {
+        EvalError::Exception(e)
     }
 }
