@@ -4,7 +4,7 @@ use gc::{Finalize, Gc, GcCell};
 use log::debug;
 
 use crate::{
-    ast::{Ast, EnvIndex, EnvStack, Lambda, SyntaxError, TailPosition::*},
+    ast::{Application, Ast, EnvIndex, EnvStack, Lambda, SyntaxError, TailPosition::*},
     prim,
     value::{Closure, Exception, PrimOp, Value},
 };
@@ -75,7 +75,7 @@ impl Vm {
 
     pub fn eval(&mut self, expr: &lexpr::Value) -> Result<Value, EvalError> {
         if let Some(ast) = Ast::definition(&expr, &mut self.stack, NonTail)? {
-            self.eval_ast(Rc::new(ast))
+            self.eval_ast(&ast)
                 .into_result()
                 .map_err(EvalError::Exception)
         } else {
@@ -96,9 +96,9 @@ impl Vm {
         }
     }
 
-    fn resolve_bodies(&mut self, bodies: &[Rc<Ast>], offset: usize) -> Result<(), Box<Exception>> {
+    fn resolve_bodies(&mut self, bodies: &[Ast], offset: usize) -> Result<(), Box<Exception>> {
         for (i, body) in bodies.iter().enumerate() {
-            let value = self.eval_ast(Rc::clone(body)).into_result()?;
+            let value = self.eval_ast(body).into_result()?;
             debug!("resolved body [{}] {:?} -> {}", i, body, value);
             self.local_set(offset + i, value);
         }
@@ -123,19 +123,24 @@ impl Vm {
         }
     }
 
-    fn eval_ast(&mut self, ast: Rc<Ast>) -> Value {
-        let mut ast = ast;
-        loop {
-            match self.eval_step(ast) {
-                Thunk::Resolved(v) => break v,
-                Thunk::Eval(thunk_ast) => {
-                    ast = thunk_ast;
+    fn eval_ast(&mut self, ast: &Ast) -> Value {
+        match self.eval_step(ast) {
+            Thunk::Resolved(v) => v,
+            Thunk::Eval(ast) => {
+                let mut ast = ast;
+                loop {
+                    match self.eval_step(&ast) {
+                        Thunk::Resolved(v) => break v,
+                        Thunk::Eval(thunk_ast) => {
+                            ast = thunk_ast;
+                        }
+                    }
                 }
             }
         }
     }
 
-    fn eval_step(&mut self, ast: Rc<Ast>) -> Thunk {
+    fn eval_step(&mut self, ast: &Ast) -> Thunk {
         debug!("eval-step: {:?} in {:?}", &ast, &self.env);
         match &*ast {
             Ast::EnvRef(idx) => Thunk::Resolved(self.env_lookup(idx)),
@@ -147,43 +152,36 @@ impl Vm {
                 }));
                 Thunk::Resolved(closure)
             }
-            Ast::Seq(exprs) => {
-                for (i, expr) in exprs.iter().enumerate() {
-                    if i + 1 == exprs.len() {
-                        return self.eval_step(Rc::clone(expr));
-                    }
-                    if let v @ Value::Exception(_) = self.eval_ast(Rc::clone(expr)) {
+            Ast::Seq(exprs, last) => {
+                for expr in exprs {
+                    if let v @ Value::Exception(_) = self.eval_ast(expr) {
                         return Thunk::Resolved(v);
                     }
                 }
-                unreachable!()
+                self.eval_step(last)
             }
             Ast::Bind(body) => {
                 let pos = self.local_alloc(body.bound_exprs.len());
                 try_result!(self.resolve_bodies(&body.bound_exprs, pos));
-                self.eval_step(Rc::clone(&body.expr))
+                self.eval_step(&body.expr)
             }
-            Ast::If {
-                cond,
-                consequent,
-                alternative,
-            } => {
-                let cond = try_value!(self.eval_ast(Rc::clone(cond)));
+            Ast::If(c) => {
+                let cond = try_value!(self.eval_ast(&c.cond));
                 if cond.is_true() {
-                    Thunk::Eval(Rc::clone(consequent))
+                    Thunk::Eval(Rc::clone(&c.consequent))
                 } else {
-                    Thunk::Eval(Rc::clone(alternative))
+                    Thunk::Eval(Rc::clone(&c.alternative))
                 }
             }
-            Ast::Apply { op, operands } => {
-                let (op, operands) = match self.eval_op_args(op, operands) {
+            Ast::Apply(app) => {
+                let (op, operands) = match self.eval_app(&app) {
                     Ok(v) => v,
                     Err(e) => return e.into(),
                 };
                 Thunk::Resolved(self.apply(op, operands))
             }
-            Ast::TailCall { op, operands } => {
-                let (op, operands) = match self.eval_op_args(op, operands) {
+            Ast::TailCall(app) => {
+                let (op, operands) = match self.eval_app(&app) {
                     Ok(v) => v,
                     Err(e) => return e.into(),
                 };
@@ -192,15 +190,12 @@ impl Vm {
         }
     }
 
-    fn eval_op_args(
-        &mut self,
-        op: &Rc<Ast>,
-        operands: &[Rc<Ast>],
-    ) -> Result<(Value, Vec<Value>), Box<Exception>> {
-        let op = self.eval_ast(Rc::clone(op)).into_result()?;
-        let operands = operands
+    fn eval_app(&mut self, app: &Application) -> Result<(Value, Vec<Value>), Box<Exception>> {
+        let op = self.eval_ast(&app.op).into_result()?;
+        let operands = app
+            .operands
             .iter()
-            .map(|operand| self.eval_ast(Rc::clone(operand)).into_result())
+            .map(|operand| self.eval_ast(operand).into_result())
             .collect::<Result<Vec<_>, _>>()?;
         Ok((op, operands))
     }
@@ -225,7 +220,7 @@ impl Vm {
                 try_result!(
                     self.resolve_bodies(&lambda.body.bound_exprs, lambda.params.env_slots())
                 );
-                self.eval_step(Rc::clone(&lambda.body.expr))
+                self.eval_step(&lambda.body.expr)
             }
             _ => make_error!(
                 "non-applicable object in operator position";
@@ -245,7 +240,7 @@ impl Vm {
                     try_result!(
                         vm.resolve_bodies(&lambda.body.bound_exprs, lambda.params.env_slots())
                     );
-                    vm.eval_ast(Rc::clone(&lambda.body.expr))
+                    vm.eval_ast(&lambda.body.expr)
                 })
             }
             _ => make_error!(
@@ -312,7 +307,7 @@ where
                         .and_then(|_| {
                             ast.and_then(|ast| {
                                 self.vm
-                                    .eval_ast(Rc::new(ast))
+                                    .eval_ast(&ast)
                                     .into_result()
                                     .map_err(EvalError::Exception)
                             })

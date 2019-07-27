@@ -67,11 +67,7 @@ impl EnvStack {
         self.frames.is_empty()
     }
 
-    pub fn with_pushed<T, F>(
-        &mut self,
-        params: &Params,
-        f: F,
-    ) -> Result<(Vec<Rc<Ast>>, T), SyntaxError>
+    pub fn with_pushed<T, F>(&mut self, params: &Params, f: F) -> Result<(Vec<Ast>, T), SyntaxError>
     where
         F: FnOnce(&mut Self) -> Result<T, SyntaxError>,
     {
@@ -125,11 +121,11 @@ impl EnvStack {
         &mut self.frames[last]
     }
 
-    pub fn reap_rec_bodies(&mut self) -> Result<Vec<Rc<Ast>>, SyntaxError> {
+    pub fn reap_rec_bodies(&mut self) -> Result<Vec<Ast>, SyntaxError> {
         let bodies = self.last_frame_mut().rec_bodies.split_off(0);
         bodies
             .into_iter()
-            .map(|b| Ok(Rc::new(Ast::expr(&b, self, NonTail)?)))
+            .map(|b| Ok(Ast::expr(&b, self, NonTail)?))
             .collect::<Result<_, _>>()
     }
 }
@@ -212,38 +208,41 @@ fn param_rest(rest: &lexpr::Value) -> Result<Box<str>, SyntaxError> {
 pub enum Ast {
     Datum(lexpr::Value),
     Lambda(Rc<Lambda>),
-    If {
-        cond: Rc<Ast>,
-        consequent: Rc<Ast>,
-        alternative: Rc<Ast>,
-    },
-    Apply {
-        op: Rc<Ast>,
-        operands: Vec<Rc<Ast>>,
-    },
-    TailCall {
-        op: Rc<Ast>,
-        operands: Vec<Rc<Ast>>,
-    },
+    If(Box<Conditional>),
+    Apply(Box<Application>),
+    TailCall(Box<Application>),
     EnvRef(EnvIndex),
-    Seq(Vec<Rc<Ast>>),
+    Seq(Vec<Ast>, Rc<Ast>),
     Bind(Body),
+}
+
+#[derive(Debug)]
+pub struct Application {
+    pub op: Ast,
+    pub operands: Vec<Ast>,
+}
+
+#[derive(Debug)]
+pub struct Conditional {
+    pub cond: Ast,
+    pub consequent: Rc<Ast>,
+    pub alternative: Rc<Ast>,
 }
 
 #[derive(Debug)]
 pub struct Lambda {
     pub params: Params,
-    pub body: Rc<Body>,
+    pub body: Body,
 }
 
 #[derive(Debug)]
 pub struct Body {
-    pub bound_exprs: Vec<Rc<Ast>>,
+    pub bound_exprs: Vec<Ast>,
     pub expr: Rc<Ast>,
 }
 
 impl Body {
-    fn new(bound_exprs: Vec<Rc<Ast>>, expr: Ast) -> Self {
+    fn new(bound_exprs: Vec<Ast>, expr: Ast) -> Self {
         Body {
             bound_exprs,
             expr: Rc::new(expr),
@@ -265,18 +264,18 @@ impl Lambda {
                     let tail = if i + 1 == exprs.len() { Tail } else { NonTail };
                     if definitions {
                         if let Some(ast) = Ast::definition(expr, stack, tail)? {
-                            body_exprs.push(Rc::new(ast));
+                            body_exprs.push(ast);
                             definitions = false;
                         }
                     } else {
-                        body_exprs.push(Rc::new(Ast::expr(expr, stack, tail)?));
+                        body_exprs.push(Ast::expr(expr, stack, tail)?);
                     }
                 }
                 Ok(body_exprs)
             })?;
         Ok(Lambda {
             params,
-            body: Rc::new(Body::new(bound_exprs, Ast::Seq(body_exprs))),
+            body: Body::new(bound_exprs, Ast::seq(body_exprs)),
         })
     }
 
@@ -338,16 +337,21 @@ impl Ast {
                         Ast::lambda(args[0], &args[1..], stack)
                     }
                     Some("begin") => {
-                        let exprs = proper_list(rest)?;
-                        let seq = exprs
-                            .iter()
-                            .enumerate()
-                            .map(|(i, expr)| {
-                                let tail = if i + 1 == exprs.len() { tail } else { NonTail };
-                                Ok(Rc::new(Ast::expr(expr, stack, tail)?))
-                            })
-                            .collect::<Result<_, _>>()?;
-                        Ok(Ast::Seq(seq))
+                        let mut exprs = proper_list(rest)?;
+                        if let Some(last_expr) = exprs.pop() {
+                            let tail_ast = Ast::expr(last_expr, stack, tail)?;
+                            if exprs.is_empty() {
+                                Ok(tail_ast)
+                            } else {
+                                let seq = exprs
+                                    .iter()
+                                    .map(|expr| Ok(Ast::expr(expr, stack, NonTail)?))
+                                    .collect::<Result<_, _>>()?;
+                                Ok(Ast::Seq(seq, Rc::new(tail_ast)))
+                            }
+                        } else {
+                            Ok(Ast::Datum(lexpr::Value::Nil))
+                        }
                     }
                     Some("define") => {
                         Err(syntax_error!("`define` not allowed in expression context"))
@@ -357,34 +361,30 @@ impl Ast {
                         if args.len() < 2 {
                             return Err(syntax_error!("`if` expects at least two forms"));
                         }
-                        let cond = Ast::expr(&args[0], stack, NonTail)?.into();
-                        let consequent = Ast::expr(&args[1], stack, tail)?.into();
+                        let cond = Ast::expr(&args[0], stack, NonTail)?;
+                        let consequent = Ast::expr(&args[1], stack, tail)?;
                         let alternative = if args.len() == 3 {
-                            Ast::expr(&args[2], stack, tail)?.into()
+                            Ast::expr(&args[2], stack, tail)?
                         } else if args.len() == 2 {
-                            Rc::new(Ast::Datum(lexpr::Value::Nil))
+                            Ast::Datum(lexpr::Value::Nil)
                         } else {
                             return Err(syntax_error!(
                                 "`if` expects at least no more than three forms"
                             ));
                         };
-                        Ok(Ast::If {
-                            cond,
-                            consequent,
-                            alternative,
-                        })
+                        Ok(Ast::conditional(cond, consequent, alternative))
                     }
                     _ => {
                         let arg_exprs = proper_list(rest)?;
-                        let op = Ast::expr(first, stack, NonTail)?.into();
+                        let op = Ast::expr(first, stack, NonTail)?;
                         let operands = arg_exprs
                             .into_iter()
-                            .map(|arg| Ok(Ast::expr(arg, stack, NonTail)?.into()))
-                            .collect::<Result<Vec<Rc<Ast>>, _>>()?;
+                            .map(|arg| Ok(Ast::expr(arg, stack, NonTail)?))
+                            .collect::<Result<Vec<Ast>, _>>()?;
                         if tail == Tail {
-                            Ok(Ast::TailCall { op, operands })
+                            Ok(Ast::tail_call(op, operands))
                         } else {
-                            Ok(Ast::Apply { op, operands })
+                            Ok(Ast::apply(op, operands))
                         }
                     }
                 }
@@ -443,11 +443,11 @@ impl Ast {
                         let tail = if i + 1 == exprs.len() { tail } else { NonTail };
                         if definitions {
                             if let Some(ast) = Ast::definition(expr, stack, tail)? {
-                                body_exprs.push(Rc::new(ast));
+                                body_exprs.push(ast);
                                 definitions = false;
                             }
                         } else {
-                            body_exprs.push(Rc::new(Ast::expr(expr, stack, tail)?))
+                            body_exprs.push(Ast::expr(expr, stack, tail)?)
                         }
                     }
                     if body_exprs.is_empty() {
@@ -455,11 +455,11 @@ impl Ast {
                     }
                     let bodies = stack.reap_rec_bodies()?;
                     if bodies.is_empty() {
-                        Ok(Some(Ast::Seq(body_exprs)))
+                        Ok(Some(Ast::seq(body_exprs)))
                     } else {
                         Ok(Some(Ast::Bind(Body {
                             bound_exprs: bodies,
-                            expr: Rc::new(Ast::Seq(body_exprs)),
+                            expr: Rc::new(Ast::seq(body_exprs)),
                         })))
                     }
                 }
@@ -478,6 +478,34 @@ impl Ast {
     ) -> Result<Self, SyntaxError> {
         let params = Params::new(params)?;
         Ok(Ast::Lambda(Rc::new(Lambda::new(params, body, stack)?)))
+    }
+
+    fn tail_call(op: Ast, operands: Vec<Ast>) -> Self {
+        Ast::TailCall(Box::new(Application { op, operands }))
+    }
+
+    fn apply(op: Ast, operands: Vec<Ast>) -> Self {
+        Ast::Apply(Box::new(Application { op, operands }))
+    }
+
+    fn conditional(cond: Ast, consequent: Ast, alternative: Ast) -> Self {
+        Ast::If(Box::new(Conditional {
+            cond,
+            consequent: consequent.into(),
+            alternative: alternative.into(),
+        }))
+    }
+
+    fn seq(mut seq: Vec<Ast>) -> Self {
+        if let Some(last) = seq.pop() {
+            if seq.is_empty() {
+                last
+            } else {
+                Ast::Seq(seq, Rc::new(last))
+            }
+        } else {
+            Ast::Datum(lexpr::Value::Nil)
+        }
     }
 }
 
