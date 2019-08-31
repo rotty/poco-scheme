@@ -2,7 +2,7 @@ use std::{fmt, fs, path::Path};
 
 use lexpr::sexp;
 
-use poco_scheme::{EvalError, Value, Vm};
+use poco_scheme::{Context, EvalError, Value};
 
 // Poor man's `failure` crate emulation
 #[derive(Debug)]
@@ -57,7 +57,9 @@ impl fmt::Display for TestError {
                 "{} failed: got {}, expected {}",
                 self.description, result, expected
             ),
-            UnexpectedSuccess(value) => write!(f, "unexpected success with {}", value),
+            UnexpectedSuccess(value) => {
+                write!(f, "{}: unexpected success with {}", self.description, value)
+            }
         }
     }
 }
@@ -112,10 +114,11 @@ impl Test {
         }
     }
     fn run(&self) -> TestResult {
-        let mut vm = Vm::new();
+        let ctx = Context::make_eval();
+        let result = ctx.eval(&self.expr);
         match &self.kind {
             TestKind::Expect(value) => {
-                let result = vm.eval(&self.expr).map_err(|e| TestError {
+                let result = result.map_err(|e| TestError {
                     description: self.description.clone(),
                     kind: TestErrorKind::EvalFail(e),
                 })?;
@@ -131,7 +134,7 @@ impl Test {
                     Ok(())
                 }
             }
-            TestKind::ExpectFailure => match vm.eval(&self.expr) {
+            TestKind::ExpectFailure => match result {
                 Err(_) => Ok(()),
                 Ok(value) => Err(TestError {
                     description: self.description.clone(),
@@ -158,19 +161,21 @@ fn run_scheme_test_file(path: &Path) -> Result<Vec<TestResult>, Error> {
 
 #[test]
 fn run_scheme_tests() {
+    env_logger::init();
+
     for entry in fs::read_dir("tests/scheme").expect("test dir not found") {
         let path = entry.expect("reading test dir failed").path();
         if let Some("scm") = path.extension().and_then(|e| e.to_str()) {
-            let errors: Vec<_> = run_scheme_test_file(&path)
-                .unwrap_or_else(|e| {
-                    panic!("error running tests in {}: {}", path.display(), e);
-                })
-                .into_iter()
-                .filter_map(Result::err)
-                .collect();
+            let results = run_scheme_test_file(&path).unwrap_or_else(|e| {
+                panic!("error running tests in {}: {}", path.display(), e);
+            });
+            let total_count = results.len();
+            let errors: Vec<_> = results.into_iter().filter_map(Result::err).collect();
             if !errors.is_empty() {
                 panic!(
-                    "failed tests in {}:\n{}",
+                    "{}/{} failed tests in {}:\n{}",
+                    errors.len(),
+                    total_count,
                     path.display(),
                     ErrorList(&errors)
                 );

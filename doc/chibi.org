@@ -1,0 +1,32 @@
+* Things I found out
+
+** Environments
+
+The AST contains "refs", which consist of the name and environment
+cell. These refs are then compiled into:
+
+- Global refs (~SEXP_OP_GLOBAL_REF~, ~SEXP_OP_GLOBAL_KNOWN_REF~),
+  which get a reference to the referenced cell compiled in.
+- Local refs (~SEXP_OP_LOCAL_REF~), which refer to a procedures
+  parameters or locals.
+- Closure refs (~SEXP_OP_CLOSURE_REF~), which refer to the free
+  variables of a lambda expression. The compiler emits the index into
+  the variable vector of the procedure object.
+
+** Contexts
+
+A context captures the state of the lexical environment during the
+analysis phase. The interesting fields in this area are stored in the
+~specific~ vector, about which the source notes:
+
+#+BEGIN_QUOTE
+during compilation, ~sexp_context_specific~ is set to a vector
+containing the following elements:
+#+END_QUOTE
+
+- ~fv~ ("free variables", most certainly) is related to syntactic
+  closures, and contains a list grouped, with three elements, the
+  newly-created child context itself, free variables of the syntactic
+  closure encountered, and the environment of the parent context. This
+  group of three is actually consed onto the beginning of the parent's
+  context ~fv~ list.

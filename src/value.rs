@@ -3,9 +3,12 @@ use std::{
     rc::Rc,
 };
 
-use gc::{Finalize, Gc, GcCell};
+use gc::{Finalize, Gc, GcCell, Trace};
 
-use crate::{ast::Lambda, util::ShowSlice, vm::Env};
+use crate::{
+    ast::{Ast, Lambda, Params},
+    util::ShowSlice,
+};
 
 // Note that currently, this type is designed to be two machine words on a
 // 64-bit architecture. The size should be one machine word on both 32-bit and
@@ -18,11 +21,76 @@ pub enum Value {
     Bool(bool),
     Null,
     Unspecified,
+    Undefined,
     Cons(Gc<[Value; 2]>),
-    Symbol(Box<String>), // TODO: interning
+    Symbol(Rc<String>), // TODO: interning
     PrimOp(&'static PrimOp),
-    Closure(Box<Closure>),
+    Lambda(Gc<GcCell<Lambda>>),
+    Procedure(Gc<Procedure>),
     Exception(Box<Exception>),
+    Core(Core),
+}
+
+#[derive(Debug)]
+pub struct Procedure {
+    pub name: Option<Rc<str>>,
+    pub params: Params,
+    pub body: Gc<Ast>,
+}
+
+impl Finalize for Procedure {}
+
+macro_rules! impl_procedure_trace_body {
+    ($this:ident, $method:ident) => {
+        $this.body.$method();
+    };
+}
+
+unsafe impl Trace for Procedure {
+    unsafe fn trace(&self) {
+        impl_procedure_trace_body!(self, trace);
+    }
+    unsafe fn root(&self) {
+        impl_procedure_trace_body!(self, root);
+    }
+    unsafe fn unroot(&self) {
+        impl_procedure_trace_body!(self, unroot);
+    }
+    fn finalize_glue(&self) {
+        self.finalize();
+        impl_procedure_trace_body!(self, finalize_glue);
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum Core {
+    Define,
+    Lambda,
+    If,
+    Begin,
+    Quote,
+}
+
+impl Core {
+    pub fn name(&self) -> &'static str {
+        use Core::*;
+        match self {
+            Define => "define",
+            Lambda => "lambda",
+            If => "if",
+            Begin => "begin",
+            Quote => "quote",
+        }
+    }
+    pub fn items() -> &'static [Core] {
+        &[
+            Core::Define,
+            Core::Lambda,
+            Core::If,
+            Core::Begin,
+            Core::Quote,
+        ]
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -60,16 +128,10 @@ impl PartialEq<PrimOp> for PrimOp {
     }
 }
 
-impl PartialEq<Closure> for Closure {
-    fn eq(&self, _: &Closure) -> bool {
+impl PartialEq<Procedure> for Procedure {
+    fn eq(&self, _: &Procedure) -> bool {
         false
     }
-}
-
-#[derive(Clone, Debug)]
-pub struct Closure {
-    pub lambda: Rc<Lambda>,
-    pub env: Gc<GcCell<Env>>,
 }
 
 impl Value {
@@ -109,11 +171,13 @@ impl Value {
             true
         }
     }
+
     pub fn to_datum(&self) -> Option<lexpr::Value> {
         use Value::*;
         match self {
             Null => Some(lexpr::Value::Null),
             Unspecified => Some(lexpr::Value::Nil),
+            Undefined => None,
             Bool(b) => Some((*b).into()),
             Fixnum(n) => Some((*n as i64).into()),
             String(s) => Some(s.as_str().into()),
@@ -125,7 +189,7 @@ impl Value {
                     _ => None,
                 }
             }
-            PrimOp(_) | Closure(_) | Exception(_) => None,
+            PrimOp(_) | Exception(_) | Core(_) | Lambda(_) | Procedure(_) => None,
         }
     }
 }
@@ -165,7 +229,7 @@ impl From<&lexpr::Value> for Value {
                 }
             }
             String(s) => s.as_ref().into(),
-            Symbol(s) => Value::Symbol(Box::new(s.as_ref().to_owned())),
+            Symbol(s) => Value::Symbol(s.as_ref().to_owned().into()),
             Cons(cell) => {
                 let (car, cdr) = cell.as_pair();
                 Value::Cons(Gc::new([car.into(), cdr.into()]))
@@ -191,9 +255,9 @@ impl fmt::Display for Value {
             Value::Symbol(s) => write!(f, "{}", s),
             Value::Bool(b) => f.write_str(if *b { "#t" } else { "#f" }),
             Value::PrimOp(op) => write!(f, "#<prim-op {}>", op.name),
-            Value::Closure { .. } => write!(f, "#<closure>"),
             Value::Null => write!(f, "()"),
             Value::Unspecified => write!(f, "#<unspecified>"),
+            Value::Undefined => write!(f, "#<undefined>"),
             Value::Cons(cell) => write_cons(f, cell),
             Value::String(s) => lexpr::Value::string(s.as_str()).fmt(f),
             Value::Exception(e) => write!(
@@ -202,6 +266,22 @@ impl fmt::Display for Value {
                 e.message,
                 ShowSlice(&e.irritants)
             ),
+            Value::Core(c) => write!(f, "#<core {}>", c.name()),
+            Value::Procedure(proc) => {
+                if let Some(name) = &proc.name {
+                    write!(f, "#<procedure {} {}>", name, proc.params)
+                } else {
+                    write!(f, "#<procedure {}>", proc.params)
+                }
+            }
+            Value::Lambda(lambda) => {
+                let lambda = lambda.borrow();
+                if let Some(name) = &lambda.name {
+                    write!(f, "#<lambda {} {}>", name, lambda.params)
+                } else {
+                    write!(f, "#<lambda {}>", lambda.params)
+                }
+            }
         }
     }
 }
@@ -240,10 +320,8 @@ macro_rules! impl_value_trace_body {
                 cell[0].$method();
                 cell[1].$method();
             }
-            Value::Closure(boxed) => {
-                let Closure { env, .. } = boxed.as_ref();
-                env.$method();
-            }
+            Value::Lambda(lambda) => lambda.$method(),
+            Value::Procedure(proc) => proc.$method(),
             _ => {}
         }
     };

@@ -1,6 +1,6 @@
 use std::io::{self, Write};
 
-use crate::Value;
+use crate::value::{PrimOp, Value};
 
 fn invalid_argument(arg: Value, expected: &str) -> Value {
     make_error!("invalid argument, expected {}", expected; arg)
@@ -157,4 +157,31 @@ pub fn newline(args: &[Value]) -> Value {
     }
     try_result!(writeln!(io::stdout()).map_err(io_error));
     Value::Unspecified
+}
+
+macro_rules! prim_op {
+    ($name:tt, $func:expr) => {{
+        static OP: PrimOp = PrimOp {
+            name: $name,
+            func: $func,
+        };
+        ($name, Value::PrimOp(&OP))
+    }};
+}
+
+pub fn make_ops() -> Vec<(&'static str, Value)> {
+    vec![
+        prim_op!("+", plus),
+        prim_op!("-", minus),
+        prim_op!("*", times),
+        prim_op!("<", lt),
+        prim_op!("<=", le),
+        prim_op!(">", gt),
+        prim_op!(">=", ge),
+        prim_op!("=", eq),
+        prim_op!("modulo", modulo),
+        prim_op!("sqrt", sqrt),
+        prim_op!("display", display),
+        prim_op!("newline", newline),
+    ]
 }

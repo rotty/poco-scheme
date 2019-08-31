@@ -58,7 +58,3 @@
            (loop 3))
          (prime? 42))
        => #f)
-
-;; Syntax errors
-(check-fail "detect undefined identifier in definition body"
-            (define (foo) bar))

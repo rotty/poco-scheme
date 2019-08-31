@@ -1,4 +1,10 @@
 macro_rules! make_error {
+    ($fmt:literal) => {
+        $crate::Value::Exception(Box::new($crate::value::Exception {
+            message: $fmt.into(),
+            irritants: Vec::new(),
+        }))
+    };
     ($fmt:literal, $($fmtargs:expr),*) => {
         $crate::Value::Exception(Box::new($crate::value::Exception {
             message: format!($fmt, $($fmtargs),*),
@@ -40,10 +46,10 @@ macro_rules! try_result {
 }
 
 mod ast;
+mod context;
 mod prim;
 mod util;
 mod value;
-mod vm;
 
+pub use context::{Context, EvalError};
 pub use value::{PrimOp, Value};
-pub use vm::{EvalError, Vm};

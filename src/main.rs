@@ -4,12 +4,12 @@ use std::{
     path::Path,
 };
 
-use poco_scheme::{EvalError, Value, Vm};
+use poco_scheme::{Context, EvalError, Value};
 
-fn load(vm: &mut Vm, path: impl AsRef<Path>) -> Result<(), EvalError> {
+fn load(ctx: &mut Context, path: impl AsRef<Path>) -> Result<(), EvalError> {
     let file = fs::File::open(path)?;
     let parser = lexpr::Parser::from_reader(file);
-    for res in vm.process(parser) {
+    for res in ctx.eval_iter(parser) {
         let _ = res?;
     }
     Ok(())
@@ -19,10 +19,10 @@ fn main() -> Result<(), EvalError> {
     env_logger::init();
 
     let args: Vec<_> = env::args_os().skip(1).collect();
-    let mut vm = Vm::new();
+    let mut ctx = Context::make_eval();
     if args.is_empty() {
         let input = io::BufReader::new(io::stdin());
-        for res in vm.process::<_, EvalError>(input.lines().map(|line| Ok(line?.parse()?))) {
+        for res in ctx.eval_iter::<_, EvalError>(input.lines().map(|line| Ok(line?.parse()?))) {
             match res {
                 Ok(value) => {
                     if value != Value::Unspecified {
@@ -34,7 +34,7 @@ fn main() -> Result<(), EvalError> {
         }
     } else {
         for filename in &args {
-            load(&mut vm, filename)?;
+            load(&mut ctx, filename)?;
         }
     }
     Ok(())
